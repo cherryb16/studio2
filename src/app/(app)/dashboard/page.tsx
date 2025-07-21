@@ -4,7 +4,7 @@ import { MetricCard } from '@/components/dashboard/metric-card';
 import { PerformanceChart } from '@/components/dashboard/performance-chart';
 import { WinLossChart } from '@/components/dashboard/win-loss-chart';
 import { useAuth } from '@/hooks/use-auth';
-import { getSnapTradeLoginUrl } from '@/app/actions';
+import { getSnapTradeLoginUrl } from '@/app/actions/snaptrade';
 import { useToast } from '@/hooks/use-toast';
 import { Banknote, Percent, Scalpel, TrendingUp, TrendingDown, HelpCircle, Loader2 } from 'lucide-react';
 import { useState } from 'react';
