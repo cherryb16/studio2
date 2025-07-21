@@ -51,35 +51,46 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const handleRedirectResult = async () => {
       try {
-        // Handle the redirect result when the user comes back from Google
-        await getRedirectResult(auth);
+        console.log("Checking for redirect result...");
+        const result = await getRedirectResult(auth);
+        if (result) {
+          console.log("Redirect result found:", result.user?.email);
+          // The onAuthStateChanged will handle the redirect to dashboard
+        } else {
+          console.log("No redirect result found");
+        }
       } catch (error) {
         console.error("Error handling Google sign-in redirect result:", error);
       }
     };
 
-    const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
+    // Check for redirect result immediately when component mounts
+    handleRedirectResult();
+
+    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+      console.log("Auth state changed:", currentUser?.email || "No user");
       setUser(currentUser);
       setLoading(false);
 
       // Handle redirects based on authentication state
       if (currentUser) {
+        console.log("User authenticated, current path:", pathname);
         // User is signed in - redirect to dashboard if they're on auth pages
         const isOnAuthPage = pathname === '/login' || pathname === '/signup' || pathname === '/';
         if (isOnAuthPage) {
+          console.log("Redirecting to dashboard...");
           router.push('/dashboard');
         }
       } else {
+        console.log("No user, current path:", pathname);
         // User is not signed in - redirect to login if they're on protected pages
         const isOnProtectedPage = pathname.startsWith('/dashboard') || 
-                                 pathname.startsWith('/trades') || 
-                                 pathname.startsWith('/journal');
+                                pathname.startsWith('/trades') || 
+                                pathname.startsWith('/journal');
         if (isOnProtectedPage) {
+          console.log("Redirecting to login...");
           router.push('/login');
         }
-        
-        // Check for Google redirect result only if user is not signed in
-        await handleRedirectResult();
       }
     });
 
