@@ -8,7 +8,8 @@ import {
   signInWithEmailAndPassword,
   signOut,
   GoogleAuthProvider,
-  signInWithPopup,
+  signInWithRedirect,
+  getRedirectResult
 } from 'firebase/auth';
 import { auth } from '@/lib/firebase';
 import { useRouter } from 'next/navigation';
@@ -35,7 +36,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const googleSignIn = () => {
     const provider = new GoogleAuthProvider();
-    return signInWithPopup(auth, provider);
+    return signInWithRedirect(auth, provider);
   };
 
   const signUp = (email: string, pass: string) => {
@@ -47,10 +48,34 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+    const handleRedirectResult = async () => {
+      try {
+        // Handle the redirect result when the user comes back from Google
+        await getRedirectResult(auth);
+        // After handling redirect, check for the current user and redirect if found
+        const currentUser = auth.currentUser;
+        if (currentUser) {
+          router.push('/dashboard');
+        }
+      } catch (error) {
+        console.error("Error handling Google sign-in redirect result:", error);
+        // You might want to show an error message to the user
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
       setUser(currentUser);
-      setLoading(false);
+      // If currentUser is null, it means the user is not signed in,
+      // and we should check for a redirect result.
+      if (!currentUser) {
+        handleRedirectResult();
+      } else {
+        setLoading(false);
+      }
     });
+
     return () => unsubscribe();
   }, []);
 
