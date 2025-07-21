@@ -12,7 +12,7 @@ import {
   getRedirectResult
 } from 'firebase/auth';
 import { auth } from '@/lib/firebase';
-import { useRouter } from 'next/navigation';
+import { useRouter, usePathname } from 'next/navigation';
 
 export interface AuthContextType {
   user: User | null;
@@ -29,6 +29,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
   const router = useRouter();
+  const pathname = usePathname();
 
   const signIn = (email: string, pass: string) => {
     return signInWithEmailAndPassword(auth, email, pass);
@@ -52,32 +53,38 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       try {
         // Handle the redirect result when the user comes back from Google
         await getRedirectResult(auth);
-        // After handling redirect, check for the current user and redirect if found
-        const currentUser = auth.currentUser;
-        if (currentUser) {
-          router.push('/dashboard');
-        }
       } catch (error) {
         console.error("Error handling Google sign-in redirect result:", error);
-        // You might want to show an error message to the user
-      } finally {
-        setLoading(false);
       }
     };
 
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
       setUser(currentUser);
-      // If currentUser is null, it means the user is not signed in,
-      // and we should check for a redirect result.
-      if (!currentUser) {
-        handleRedirectResult();
+      setLoading(false);
+
+      // Handle redirects based on authentication state
+      if (currentUser) {
+        // User is signed in - redirect to dashboard if they're on auth pages
+        const isOnAuthPage = pathname === '/login' || pathname === '/signup' || pathname === '/';
+        if (isOnAuthPage) {
+          router.push('/dashboard');
+        }
       } else {
-        setLoading(false);
+        // User is not signed in - redirect to login if they're on protected pages
+        const isOnProtectedPage = pathname.startsWith('/dashboard') || 
+                                 pathname.startsWith('/trades') || 
+                                 pathname.startsWith('/journal');
+        if (isOnProtectedPage) {
+          router.push('/login');
+        }
+        
+        // Check for Google redirect result only if user is not signed in
+        await handleRedirectResult();
       }
     });
 
     return () => unsubscribe();
-  }, []);
+  }, [router, pathname]);
 
   const value = {
     user,
