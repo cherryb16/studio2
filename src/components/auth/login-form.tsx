@@ -5,6 +5,7 @@ import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import * as z from 'zod';
 import { useAuth } from '@/hooks/use-auth';
+import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 
 import { Button } from '@/components/ui/button';
@@ -29,6 +30,7 @@ const formSchema = z.object({
 export function LoginForm() {
   const [loading, setLoading] = useState(false);
   const { signIn, googleSignIn } = useAuth();
+  const router = useRouter();
   const { toast } = useToast();
 
   const form = useForm<z.infer<typeof formSchema>>({
@@ -43,7 +45,7 @@ export function LoginForm() {
     setLoading(true);
     try {
       await signIn(values.email, values.password);
-      // No manual redirect needed - AuthProvider handles this
+      router.push('/dashboard');
       toast({
         title: 'Success',
         description: 'Successfully signed in!',
@@ -63,14 +65,15 @@ export function LoginForm() {
     setLoading(true);
     try {
       await googleSignIn();
-      // No manual redirect needed - AuthProvider handles this
+      router.push('/dashboard');
     } catch (error: any) {
       toast({
         variant: 'destructive',
         title: 'Google Sign-In Failed',
         description: error.message,
       });
-      setLoading(false); // Only set loading false on error, redirect will happen on success
+    } finally {
+      setLoading(false);
     }
   }
   
@@ -105,31 +108,6 @@ export function LoginForm() {
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          <Button
-            variant="outline"
-            className="w-full"
-            onClick={handleGoogleSignIn}
-            disabled={loading}
-          >
-            {loading ? (
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-            ) : (
-              <GoogleIcon className="mr-2 h-4 w-4" />
-            )}
-            Continue with Google
-          </Button>
-          
-          <div className="relative">
-            <div className="absolute inset-0 flex items-center">
-              <span className="w-full border-t" />
-            </div>
-            <div className="relative flex justify-center text-xs uppercase">
-              <span className="bg-background px-2 text-muted-foreground">
-                Or continue with
-              </span>
-            </div>
-          </div>
-
           <Form {...form}>
             <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
               <FormField
@@ -164,7 +142,32 @@ export function LoginForm() {
               </Button>
             </form>
           </Form>
-          
+
+          <div className="relative my-4">
+            <div className="absolute inset-0 flex items-center">
+              <span className="w-full border-t" />
+            </div>
+            <div className="relative flex justify-center text-xs uppercase">
+              <span className="bg-background px-2 text-muted-foreground">
+                Or continue with
+              </span>
+            </div>
+          </div>
+
+          <Button
+            variant="outline"
+            className="w-full"
+            onClick={handleGoogleSignIn}
+            disabled={loading}
+          >
+            {loading ? (
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            ) : (
+              <GoogleIcon className="mr-2 h-4 w-4" />
+            )}
+            Continue with Google
+          </Button>
+
           <div className="text-center text-sm">
             Don&apos;t have an account?{' '}
             <Link href="/signup" className="text-primary underline-offset-4 hover:underline">
