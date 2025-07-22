@@ -39,35 +39,41 @@ export function AppSidebar() {
       <SidebarContent>
         <SidebarMenu>
           <SidebarMenuItem>
-            <Link href="/dashboard" legacyBehavior passHref>
+            <Link href="/dashboard">
               <SidebarMenuButton
                 tooltip="Dashboard"
                 isActive={isActive('/dashboard')}
               >
-                <LayoutDashboard />
-                <span>Dashboard</span>
+                <span>
+                  <LayoutDashboard />
+                  <span>Dashboard</span>
+                </span>
               </SidebarMenuButton>
             </Link>
           </SidebarMenuItem>
           <SidebarMenuItem>
-            <Link href="/trades" legacyBehavior passHref>
+            <Link href="/trades">
               <SidebarMenuButton
                 tooltip="Trades"
                 isActive={isActive('/trades')}
               >
-                <CandlestickChart />
-                <span>Trades</span>
+                 <span>
+                   <CandlestickChart />
+                   <span>Trades</span>
+                 </span>
               </SidebarMenuButton>
             </Link>
           </SidebarMenuItem>
           <SidebarMenuItem>
-            <Link href="/journal" legacyBehavior passHref>
+            <Link href="/journal">
               <SidebarMenuButton
                 tooltip="Journal"
                 isActive={isActive('/journal')}
               >
-                <BookOpen />
-                <span>Journal</span>
+                 <span>
+                   <BookOpen />
+                   <span>Journal</span>
+                 </span>
               </SidebarMenuButton>
             </Link>
           </SidebarMenuItem>
