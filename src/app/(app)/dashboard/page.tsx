@@ -166,7 +166,7 @@ export default function DashboardPage() {
                 {isLoading ? (
                     <div>Loading...</div>
                 ) : dataError ? (
-                    <div>Error: {(dataError as Error).message}</div>
+                    <div>Error: {dataError instanceof Error ? dataError.message : 'An unknown error occurred'}</div>
                 ) : (
                     <>
                         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
@@ -195,22 +195,38 @@ export default function DashboardPage() {
                                         </TableRow>
                                     </TableHeader>
                                     <TableBody>
-                                        {allPositions.map((position: any, index: number) => (
-                                            <TableRow key={index}>
-                                                <TableCell>{position.symbol?.symbol || position.symbol?.option_symbol?.ticker}</TableCell>
-                                                <TableCell>{position.symbol?.description}</TableCell>
-                                                <TableCell>{position.units}</TableCell>
-                                                <TableCell>{position.price}</TableCell>
-                                                <TableCell>{position.average_purchase_price}</TableCell>
-                                                <TableCell>{position.open_pnl}</TableCell>
-                                                 {/* Find the account name for the position */}
-                                                <TableCell>
-                                                    {accounts && Array.isArray(accounts)
-                                                        ? accounts.find((acc: any) => acc.id === position.account_id)?.name || 'N/A'
-                                                        : 'N/A'}
-                                                </TableCell>
-                                            </TableRow>
-                                        ))}
+                                        {allPositions
+                                            .filter(position => !(Array.isArray(position) && position.length === 0))
+                                            .map((position: any, index: number) => {
+                                                let symbolString = 'N/A'; // Initialize with a default string
+
+                                                if (position.symbol) {
+                                                    if (position.symbol.symbol) {
+                                                        symbolString = position.symbol.symbol;
+                                                    } else if (position.symbol.option_symbol?.ticker) {
+                                                        symbolString = position.symbol.option_symbol.ticker;
+                                                    }
+                                                }
+
+                                                console.log("position.symbol (detailed):", JSON.stringify(position.symbol, null, 2)); // Detailed log
+
+                                                return (
+                                                    <TableRow key={index}>
+                                                        <TableCell>{symbolString}</TableCell>
+                                                        <TableCell>{position.symbol?.description || 'N/A'}</TableCell>
+                                                        <TableCell>{String(position.units) || 'N/A'}</TableCell>
+                                                        <TableCell>{String(position.price) || 'N/A'}</TableCell>
+                                                        <TableCell>{String(position.average_purchase_price) || 'N/A'}</TableCell>
+                                                        <TableCell>{String(position.open_pnl) || 'N/A'}</TableCell>
+                                                        {/* Find the account name for the position */}
+                                                        <TableCell>
+                                                            {accounts && Array.isArray(accounts)
+                                                                ? accounts.find((acc: any) => acc.id === position.account_id)?.name || 'N/A'
+                                                                : 'N/A'}
+                                                        </TableCell>
+                                                    </TableRow>
+                                                );
+                                            })}
                                     </TableBody>
                                 </Table>
                                 </div>
