@@ -8,22 +8,41 @@ import {
   signInWithEmailAndPassword,
   signOut,
   GoogleAuthProvider,
-  signInWithRedirect,
-  getRedirectResult
+  signInWithPopup, // Use signInWithPopup
+  updateProfile
 } from 'firebase/auth';
 import { auth } from '@/lib/firebase';
 import { useRouter, usePathname } from 'next/navigation';
+import { doc, setDoc, getFirestore } from 'firebase/firestore';
+import { UserData } from '@/lib/types';
 
 export interface AuthContextType {
   user: User | null;
   loading: boolean;
   signIn: (email: string, pass: string) => Promise<any>;
   googleSignIn: () => Promise<any>;
-  signUp: (email: string, pass: string) => Promise<any>;
+  signUp: (userData: Omit<UserData, 'uid' | 'createdAt' | 'email' | 'snaptradeUserID' | 'snaptradeUserSecret'> & { email: string, password: string }) => Promise<any>;
   logOut: () => Promise<void>;
 }
 
 export const AuthContext = createContext<AuthContextType | undefined>(undefined);
+
+const db = getFirestore();
+
+async function saveUserData(user: User, userData: Omit<UserData, 'uid' | 'createdAt' | 'email' | 'snaptradeUserID' | 'snaptradeUserSecret'>) {
+  const userRef = doc(db, 'users', user.uid);
+  const dataToSave: UserData = {
+    uid: user.uid,
+    email: user.email, // Use user.email which can be string | null
+    createdAt: Date.now(),
+    firstName: userData.firstName,
+    lastName: userData.lastName,
+    dob: userData.dob,
+    tradingExperience: userData.tradingExperience,
+    // snaptradeUserID and snaptradeUserSecret will be added later
+  };
+  await setDoc(userRef, dataToSave, { merge: true });
+}
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
@@ -35,13 +54,31 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return signInWithEmailAndPassword(auth, email, pass);
   };
 
-  const googleSignIn = () => {
+  const googleSignIn = async () => {
     const provider = new GoogleAuthProvider();
-    return signInWithRedirect(auth, provider);
+    const result = await signInWithPopup(auth, provider); // Use signInWithPopup
+    // After successful sign-in with popup, check if user data exists and save if not
+    if (result.user) {
+      // Here you would typically check if the user data exists in your Firestore
+      // If it doesn't, you would collect the additional information
+      // For this example, I'll assume the signup form is used for initial data collection
+      // If you want to handle this here, you might redirect to a profile completion page
+      console.log("Google user signed in with popup:", result.user.email);
+    }
+    return result;
   };
 
-  const signUp = (email: string, pass: string) => {
-    return createUserWithEmailAndPassword(auth, email, pass);
+  const signUp = async (userData: Omit<UserData, 'uid' | 'createdAt' | 'email' | 'snaptradeUserID' | 'snaptradeUserSecret'> & { email: string, password: string }) => {
+    const { email, password, ...additionalData } = userData;
+    const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+    // Optionally update user profile with first and last name
+    if (userCredential.user) {
+      await updateProfile(userCredential.user, {
+        displayName: `${additionalData.firstName} ${additionalData.lastName}`,
+      });
+    }
+    await saveUserData(userCredential.user, additionalData);
+    return userCredential;
   };
 
   const logOut = () => {
@@ -49,47 +86,30 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   useEffect(() => {
-    const handleRedirectResult = async () => {
-      try {
-        console.log("Checking for redirect result...");
-        const result = await getRedirectResult(auth);
-        if (result) {
-          console.log("Redirect result found:", result.user?.email);
-          // The onAuthStateChanged will handle the redirect to dashboard
-        } else {
-          console.log("No redirect result found");
-        }
-      } catch (error) {
-        console.error("Error handling Google sign-in redirect result:", error);
-      }
-    };
-
-    // Check for redirect result immediately when component mounts
-    handleRedirectResult();
-
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
-      console.log("Auth state changed:", currentUser?.email || "No user");
+      console.log("Auth state changed. Current user:", currentUser?.email || "No user");
       setUser(currentUser);
       setLoading(false);
 
-      // Handle redirects based on authentication state
       if (currentUser) {
-        console.log("User authenticated, current path:", pathname);
-        // User is signed in - redirect to dashboard if they're on auth pages
+        console.log("User is authenticated. Current path:", pathname);
         const isOnAuthPage = pathname === '/login' || pathname === '/signup' || pathname === '/';
         if (isOnAuthPage) {
-          console.log("Redirecting to dashboard...");
+          console.log(`User on auth page (${pathname}), redirecting to /dashboard`);
           router.push('/dashboard');
+        } else {
+          console.log(`User on protected page (${pathname}), no redirection needed.`);
         }
       } else {
-        console.log("No user, current path:", pathname);
-        // User is not signed in - redirect to login if they're on protected pages
+        console.log("User is NOT authenticated. Current path:", pathname);
         const isOnProtectedPage = pathname.startsWith('/dashboard') || 
                                 pathname.startsWith('/trades') || 
                                 pathname.startsWith('/journal');
         if (isOnProtectedPage) {
-          console.log("Redirecting to login...");
+          console.log(`User on protected page (${pathname}), redirecting to /login`);
           router.push('/login');
+        } else {
+          console.log(`User on public page (${pathname}), no redirection needed.`);
         }
       }
     });

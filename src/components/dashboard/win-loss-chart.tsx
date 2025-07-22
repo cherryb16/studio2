@@ -16,6 +16,7 @@ import {
   ChartTooltipContent,
   type ChartConfig,
 } from '@/components/ui/chart';
+import { cn } from "@/lib/utils";
 
 const chartData = [
   { trade: 'wins', count: 80, fill: 'hsl(var(--accent))' },
@@ -36,11 +37,15 @@ const chartConfig = {
   },
 } satisfies ChartConfig;
 
-export function WinLossChart() {
+interface WinLossChartProps {
+  className?: string;
+}
+
+export function WinLossChart({ className }: WinLossChartProps) {
   const totalTrades = chartData.reduce((acc, curr) => acc + curr.count, 0);
 
   return (
-    <Card className="flex flex-col h-full">
+    <Card className={cn("flex flex-col h-full", className)}>
       <CardHeader className="items-center pb-0">
         <CardTitle className='font-headline'>Win/Loss Ratio</CardTitle>
         <CardDescription>A breakdown of your winning and losing trades</CardDescription>
