@@ -37,7 +37,7 @@ export function AppSidebar() {
         <SidebarTrigger className="absolute right-2 top-3 md:hidden" />
       </SidebarHeader>
       <SidebarContent>
-        <SidebarMenu>
+        <SidebarMenu> {/* Removed className="gap3" */}
           <SidebarMenuItem>
             <Link href="/dashboard">
               <SidebarMenuButton
