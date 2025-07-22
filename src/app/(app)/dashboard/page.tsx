@@ -195,8 +195,12 @@ export default function DashboardPage() {
                                         </TableRow>
                                     </TableHeader>
                                     <TableBody>
+                                        {console.log("allPositions before filter:", allPositions)}
                                         {allPositions
-                                            .filter(position => !(Array.isArray(position) && position.length === 0))
+                                            .filter(position => {
+                                                console.log("Filtering position:", position, "Is Array and empty:", Array.isArray(position) && position.length === 0);
+                                                return !(Array.isArray(position) && position.length === 0);
+                                            })
                                             .map((position: any, index: number) => {
                                                 let symbolString = 'N/A'; // Initialize with a default string
 
