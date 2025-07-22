@@ -29,8 +29,8 @@ export function ConnectBrokerageButton({ user }: ConnectBrokerageButtonProps) {
       if (result.error) {
         console.error('Error getting SnapTrade login URL:', result.error);
         // Show an error message to the user
-      } else if (result.redirectUrl) {
-        router.push(result.redirectUrl);
+      } else if (result.url) { // Access url directly
+        router.push(result.url); // Use url directly
       }
     });
   };
