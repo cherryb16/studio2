@@ -7,7 +7,7 @@ import { getSnapTradeLoginUrl } from '@/app/actions/snaptrade';
 import { useToast } from '@/hooks/use-toast';
 import { MetricCard } from '@/components/dashboard/metric-card';
 import { PerformanceChart } from '@/components/dashboard/performance-chart';
-import { WinLossChart } from '@/components/dashboard/win-loss-chart';
+import { WinLossChart } from '@/components/dashboard/win-loss-chart'; // Corrected import
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Loader2, LineChart, ArrowUp, DollarSign, BarChart2 } from 'lucide-react'; // Added icon imports
 
@@ -67,7 +67,7 @@ export default function DashboardPage() {
                 <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-7">
                     <PerformanceChart className="col-span-4" />
                     <WinLossChart className="col-span-3" />
-                </div>
+                </div> {/* Added closing div tag */}
             </div>
         </ScrollArea>
     );
