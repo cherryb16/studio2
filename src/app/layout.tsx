@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import './globals.css';
 import { Toaster } from '@/components/ui/toaster';
 import { AuthProvider } from '@/components/auth-provider';
+import QueryProvider from '@/components/query-provider';
 
 export const metadata: Metadata = {
   title: 'Trade Insights Pro',
@@ -23,7 +24,9 @@ export default function RootLayout({
       </head>
       <body className="font-body antialiased">
         <AuthProvider>
-          {children}
+          <QueryProvider>
+            {children}
+          </QueryProvider>
           <Toaster />
         </AuthProvider>
       </body>
