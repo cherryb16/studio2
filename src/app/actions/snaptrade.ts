@@ -159,7 +159,7 @@ export async function getSnapTradeLoginUrl(firebaseUserId: string) {
   }
 }
 
-async function getSnapTradeCredentials(firebaseUserId: string) {
+export async function getSnapTradeCredentials(firebaseUserId: string) {
   try {
     console.log('Attempting to get SnapTrade credentials for user:', firebaseUserId); // Added log
     const userDoc = await db.collection('snaptrade_users').doc(firebaseUserId).get();
