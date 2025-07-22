@@ -1,108 +1,74 @@
 'use client';
-import { Button } from '@/components/ui/button';
-import { MetricCard } from '@/components/dashboard/metric-card';
-import { PerformanceChart } from '@/components/dashboard/performance-chart';
-import { WinLossChart } from '@/components/dashboard/win-loss-chart';
-import { useAuth } from '@/hooks/use-auth';
-import { getSnapTradeLoginUrl } from '@/app/actions/snaptrade';
-import { useToast } from '@/hooks/use-toast';
-import { Banknote, Percent, TrendingUp, TrendingDown, HelpCircle, Loader2 } from 'lucide-react';
-import { useState, useEffect } from 'react';
-import { doc, getFirestore, onSnapshot } from 'firebase/firestore';
-import { UserData } from '@/lib/types';
 
-const db = getFirestore();
+import { Button } from '@/components/ui/button';
+import { useAuth } from '@/hooks/use-auth';
+import { useState } from 'react';
+import { getSnapTradeLoginUrl } from '@/app/actions/snaptrade';
+import { toast } from '@/components/ui/use-toast';
+import MetricCard from '@/components/dashboard/metric-card';
+import PerformanceChart from '@/components/dashboard/performance-chart';
+import WinLossChart from '@/components/dashboard/win-loss-chart';
+import { ScrollArea } from '@/components/ui/scroll-area';
+import { Icons } from '@/components/icons';
 
 export default function DashboardPage() {
     const { user } = useAuth();
-    const { toast } = useToast();
     const [isConnecting, setIsConnecting] = useState(false);
-    const [userData, setUserData] = useState<UserData | null>(null);
 
-    useEffect(() => {
-        let unsubscribe: () => void;
-        if (user) {
-            const userRef = doc(db, 'users', user.uid);
-            unsubscribe = onSnapshot(userRef, (docSnap) => {
-                if (docSnap.exists()) {
-                    setUserData(docSnap.data() as UserData);
-                } else {
-                    setUserData(null);
-                }
-            });
-        } else {
-             setUserData(null);
-        }
-        return () => { if(unsubscribe) unsubscribe(); };
-    }, [user]);
 
-    const handleConnectSnapTrade = async () => {
+    const handleConnectBrokerage = async () => {
+        if (!user) return;
         setIsConnecting(true);
         try {
-            const result = await getSnapTradeLoginUrl(user!.uid);
-             if (result.url) {
-                window.location.href = result.url;
-            } else if (result.error) {
+            const result = await getSnapTradeLoginUrl(user.uid);
+            if (result.data?.redirectUrl) {
+                window.location.href = result.data.redirectUrl;
+            } else {
                  toast({
                     variant: 'destructive',
-                    title: 'Failed to connect to SnapTrade',
-                    description: result.error,
+                    title: 'Connection Failed',
+                    description: result.error || 'Could not get brokerage connection link.',
                 });
             }
-        } catch (error: any) {
-            toast({
+        } catch (e) {
+             toast({
                 variant: 'destructive',
-                title: 'Failed to connect to SnapTrade',
-                description: error.message,
+                title: 'Connection Error',
+                description: 'An unexpected error occurred.',
             });
         } finally {
             setIsConnecting(false);
         }
-    };
+    }
 
     return (
-        <div className="flex-1 space-y-4 p-8 pt-6">
-            <div className="flex items-center justify-between space-y-2">
-                <h2 className="text-3xl font-bold tracking-tight">Dashboard</h2>
-            </div>
-            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-                <MetricCard
-                    title="Total Profit/Loss"
-                    value="$1,234.56"
-                    trend="up"
-                    icon={TrendingUp}
-                />
-                <MetricCard
-                    title="Win Rate"
-                    value="65%"
-                    trend="up"
-                    icon={Percent}
-                />
-                <MetricCard
-                    title="Total Trades"
-                    value="123"
-                    trend="down"
-                    icon={Banknote}
-                />
-                 <MetricCard
-                    title="Average P/L per Trade"
-                    value="$10.04"
-                    trend="up"
-                    icon={TrendingUp}
-                />
-            </div>
-            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-7">
-                <PerformanceChart className="col-span-4" />
-                <WinLossChart className="col-span-3" />
-            </div>
-             {userData && !userData.snaptradeUserID && (
-                <div className="flex justify-center">
-                    <Button onClick={handleConnectSnapTrade} disabled={isConnecting}>
-                         {isConnecting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <HelpCircle className="mr-2 h-4 w-4" />}
-                        Connect to SnapTrade
-                    </Button>
+        <ScrollArea className="h-full">
+            <div className="flex-1 space-y-4 p-8 pt-6">
+                <div className="flex items-center justify-between space-y-2">
+                    <h2 className="text-3xl font-bold tracking-tight">Dashboard</h2>
+                    <div className="flex items-center space-x-2">
+                         <Button
+                            onClick={handleConnectBrokerage}
+                            disabled={isConnecting}
+                         >
+                            {isConnecting && (
+                                <Icons.spinner className="mr-2 h-4 w-4 animate-spin" />
+                            )}
+                            Connect Brokerage
+                         </Button>
+                    </div>
                 </div>
-            )}
-        </div>
+                 <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+                    <MetricCard title="Total Trades" value="150" growth="+20.1% from last month" />
+                    <MetricCard title="Win Rate" value="65%" growth="+5.2% from last month" />
+                    <MetricCard title="Total P&L" value="$12,345" growth="+15.0% from last month" />
+                    <MetricCard title="Avg. P&L per Trade" value="$82.30" growth="+10.5% from last month" />
+                </div>
+                <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-7">
+                    <PerformanceChart className="col-span-4" />
+                    <WinLossChart className="col-span-3" />
+                </div>
+            </div>
+        </ScrollArea>
     );
 }

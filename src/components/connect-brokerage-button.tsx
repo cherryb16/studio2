@@ -1,48 +1,50 @@
 'use client';
 
-import { useTransition } from 'react';
-import { useRouter } from 'next/navigation';
+import { useState } from 'react';
+import { Button } from './ui/button';
+import { useAuth } from '@/hooks/use-auth';
 import { getSnapTradeLoginUrl } from '@/app/actions/snaptrade';
-import { Button } from '@/components/ui/button';
+import { toast } from './ui/use-toast';
+import { Icons } from './icons';
 
-interface ConnectBrokerageButtonProps {
-  user: {
-    displayName?: string | null;
-    email?: string | null;
-    photoURL?: string | null;
-    uid: string;
-  } | null;
-}
+export default function ConnectBrokerageButton() {
+    const { user } = useAuth();
+    const [isConnecting, setIsConnecting] = useState(false);
 
-export function ConnectBrokerageButton({ user }: ConnectBrokerageButtonProps) {
-  const [isPending, startTransition] = useTransition();
-  const router = useRouter();
+    const handleConnectBrokerage = async () => {
+        if (!user) return;
+        setIsConnecting(true);
+        try {
+            const result = await getSnapTradeLoginUrl(user.uid);
+            if (result.data?.redirectUrl) {
+                window.location.href = result.data.redirectUrl;
+            } else {
+                toast({
+                    variant: 'destructive',
+                    title: 'Connection Failed',
+                    description: result.error || 'Could not get brokerage connection link.',
+                });
+            }
+        } catch (e) {
+            toast({
+                variant: 'destructive',
+                title: 'Connection Error',
+                description: 'An unexpected error occurred.',
+            });
+        } finally {
+            setIsConnecting(false);
+        }
+    };
 
-  const handleClick = () => {
-    startTransition(async () => {
-      if (!user?.uid) {
-        console.error('User not logged in or UID not available.');
-        // Show an error message to the user
-        return;
-      }
-      const result = await getSnapTradeLoginUrl(user.uid);
-      if (result.error) {
-        console.error('Error getting SnapTrade login URL:', result.error);
-        // Show an error message to the user
-      } else if (result.url) { // Access url directly
-        router.push(result.url); // Use url directly
-      }
-    });
-  };
-
-  return (
-    <Button
-      onClick={handleClick}
-      disabled={isPending || !user?.uid}
-      className="flex items-center rounded-md px-4 py-2 text-sm font-medium hover:bg-gray-100 w-full justify-start"
-      variant="ghost"
-    >
-      {isPending ? 'Connecting...' : 'Connect Brokerage'}
-    </Button>
-  );
+    return (
+        <Button
+            onClick={handleConnectBrokerage}
+            disabled={isConnecting}
+        >
+            {isConnecting && (
+                <Icons.spinner className="mr-2 h-4 w-4 animate-spin" />
+            )}
+            Connect Brokerage
+        </Button>
+    );
 }
