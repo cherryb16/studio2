@@ -4,17 +4,17 @@ import { Button } from '@/components/ui/button';
 import { useAuth } from '@/hooks/use-auth';
 import { useState } from 'react';
 import { getSnapTradeLoginUrl } from '@/app/actions/snaptrade';
-import { toast } from '@/components/ui/use-toast';
-import MetricCard from '@/components/dashboard/metric-card';
-import PerformanceChart from '@/components/dashboard/performance-chart';
-import WinLossChart from '@/components/dashboard/win-loss-chart';
+import { useToast } from '@/hooks/use-toast';
+import { MetricCard } from '@/components/dashboard/metric-card';
+import { PerformanceChart } from '@/components/dashboard/performance-chart';
+import { WinLossChart } from '@/components/dashboard/win-loss-chart';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Icons } from '@/components/icons';
+import { Loader2, LineChart, ArrowUp, DollarSign, BarChart2 } from 'lucide-react'; // Added icon imports
 
 export default function DashboardPage() {
     const { user } = useAuth();
     const [isConnecting, setIsConnecting] = useState(false);
-
+    const { toast } = useToast();
 
     const handleConnectBrokerage = async () => {
         if (!user) return;
@@ -52,17 +52,17 @@ export default function DashboardPage() {
                             disabled={isConnecting}
                          >
                             {isConnecting && (
-                                <Icons.spinner className="mr-2 h-4 w-4 animate-spin" />
+                                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                             )}
                             Connect Brokerage
                          </Button>
                     </div>
                 </div>
                  <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-                    <MetricCard title="Total Trades" value="150" growth="+20.1% from last month" />
-                    <MetricCard title="Win Rate" value="65%" growth="+5.2% from last month" />
-                    <MetricCard title="Total P&L" value="$12,345" growth="+15.0% from last month" />
-                    <MetricCard title="Avg. P&L per Trade" value="$82.30" growth="+10.5% from last month" />
+                    <MetricCard title="Total Trades" value="150" icon={LineChart} />{/* Added icon prop */}
+                    <MetricCard title="Win Rate" value="65%" icon={ArrowUp} />{/* Added icon prop */}
+                    <MetricCard title="Total P&L" value="$12,345" icon={DollarSign} />{/* Added icon prop */}
+                    <MetricCard title="Avg. P&L per Trade" value="$82.30" icon={BarChart2} />{/* Added icon prop */}
                 </div>
                 <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-7">
                     <PerformanceChart className="col-span-4" />

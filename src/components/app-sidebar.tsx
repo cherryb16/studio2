@@ -5,7 +5,8 @@ import { usePathname } from 'next/navigation';
 import { cn } from '@/lib/utils';
 import { useState } from 'react';
 import { ConnectBrokerageButton } from "./connect-brokerage-button";
-import UserNav from './user-nav';
+import { UserNav } from './user-nav';
+import { User } from 'firebase/auth'; // Import User type from firebase
 
 const mainNav = [
   {
@@ -30,7 +31,11 @@ const mainNav = [
   },
 ];
 
-export default function AppSidebar() {
+interface AppSidebarProps {
+  user: User | null; // Define the user prop
+}
+
+export default function AppSidebar({ user }: AppSidebarProps) { // Accept the user prop
     const pathname = usePathname();
     const [isOpen, setIsOpen] = useState(false);
 
@@ -92,7 +97,8 @@ export default function AppSidebar() {
                 <div className="mt-auto p-4">
                     <ConnectBrokerageButton />
                      <div className="pt-4">
-                         <UserNav />
+                         {/* Pass the user prop to UserNav */}
+                         <UserNav user={user} />
                     </div>
                 </div>
             </div>
