@@ -1,89 +1,48 @@
-'use client';
-import Link from 'next/link';
-import { usePathname } from 'next/navigation';
-import {
-  Sidebar,
-  SidebarHeader,
-  SidebarContent,
-  SidebarMenu,
-  SidebarMenuItem,
-  SidebarMenuButton,
-  SidebarFooter,
-  SidebarTrigger,
-} from '@/components/ui/sidebar';
-import {
-  LayoutDashboard,
-  CandlestickChart,
-  BookOpen,
-  Building,
-} from 'lucide-react';
+import Link from "next/link";
+import { ConnectBrokerageButton } from "./connect-brokerage-button";
 
-const Logo = () => (
-    <div className="flex items-center gap-2 p-2">
-        <Building className="w-8 h-8 text-primary" />
-        <h1 className="text-xl font-bold font-headline text-primary-foreground group-data-[collapsible=icon]:hidden">Trade Insights Pro</h1>
-    </div>
-);
+interface AppSidebarProps {
+  user: {
+    displayName?: string | null;
+    email?: string | null;
+    photoURL?: string | null;
+    uid: string;
+  } | null;
+}
 
-
-export function AppSidebar() {
-  const pathname = usePathname();
-  const isActive = (path: string) => pathname === path;
-
+export function AppSidebar({ user }: AppSidebarProps) {
   return (
-    <Sidebar>
-      <SidebarHeader>
-        <Logo />
-        <SidebarTrigger className="absolute right-2 top-3 md:hidden" />
-      </SidebarHeader>
-      <SidebarContent>
-        <SidebarMenu> {/* Removed className="gap3" */}
-          <SidebarMenuItem>
-            <Link href="/dashboard">
-              <SidebarMenuButton
-                tooltip="Dashboard"
-                isActive={isActive('/dashboard')}
-              >
-                <span>
-                  <LayoutDashboard />
-                  <span>Dashboard</span>
-                </span>
-              </SidebarMenuButton>
-            </Link>
-          </SidebarMenuItem>
-          <SidebarMenuItem>
-            <Link href="/trades">
-              <SidebarMenuButton
-                tooltip="Trades"
-                isActive={isActive('/trades')}
-              >
-                 <span>
-                   <CandlestickChart />
-                   <span>Trades</span>
-                 </span>
-              </SidebarMenuButton>
-            </Link>
-          </SidebarMenuItem>
-          <SidebarMenuItem>
-            <Link href="/journal">
-              <SidebarMenuButton
-                tooltip="Journal"
-                isActive={isActive('/journal')}
-              >
-                 <span>
-                   <BookOpen />
-                   <span>Journal</span>
-                 </span>
-              </SidebarMenuButton>
-            </Link>
-          </SidebarMenuItem>
-        </SidebarMenu>
-      </SidebarContent>
-      <SidebarFooter className="group-data-[collapsible=icon]:hidden">
-        <div className="text-xs text-sidebar-foreground/50 p-4">
-            © {new Date().getFullYear()} Trade Insights Pro
+    <div className="flex h-full flex-col space-y-4 py-4">
+      <div className="px-3 py-2">
+        <h2 className="mb-2 px-4 text-lg font-semibold tracking-tight">
+          Overview
+        </h2>
+        <div className="flex flex-col space-y-1">
+          <Link href="/dashboard" className="flex items-center rounded-md px-4 py-2 text-sm font-medium hover:bg-gray-100">
+            Dashboard
+          </Link>
+          <Link href="/journal" className="flex items-center rounded-md px-4 py-2 text-sm font-medium hover:bg-gray-100">
+            Journal
+          </Link>
+          <Link href="/trades" className="flex items-center rounded-md px-4 py-2 text-sm font-medium hover:bg-gray-100">
+            Trades
+          </Link>
+          <Link href="/positions" className="flex items-center rounded-md px-4 py-2 text-sm font-medium hover:bg-gray-100">
+            Positions
+          </Link>
         </div>
-      </SidebarFooter>
-    </Sidebar>
+      </div>
+      <div className="px-3 py-2">
+        <h2 className="mb-2 px-4 text-lg font-semibold tracking-tight">
+          Brokerage
+        </h2>
+        <div className="flex flex-col space-y-1">
+          <Link href="#" passHref>
+            <ConnectBrokerageButton user={user} />
+          </Link>
+        </div>
+      </div>
+      {/* Add more navigation sections or links here if needed */}
+    </div>
   );
 }
