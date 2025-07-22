@@ -21,10 +21,20 @@ import {
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { useToast } from '@/hooks/use-toast';
 import { Loader2 } from 'lucide-react';
+import { Calendar } from '@/components/ui/calendar';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { CalendarIcon } from 'lucide-react';
+import { format } from "date-fns";
 
 const formSchema = z.object({
   email: z.string().email({ message: 'Invalid email address.' }),
   password: z.string().min(6, { message: 'Password must be at least 6 characters.' }),
+  firstName: z.string().min(1, { message: 'First name is required.' }),
+  lastName: z.string().min(1, { message: 'Last name is required.' }),
+  dob: z.date({
+    required_error: "A date of birth is required.",
+  }),
+  tradingExperience: z.string().min(1, { message: 'Trading experience is required.' }),
 });
 
 export function SignupForm() {
@@ -38,13 +48,25 @@ export function SignupForm() {
     defaultValues: {
       email: '',
       password: '',
+      firstName: '',
+      lastName: '',
+      dob: undefined,
+      tradingExperience: '',
     },
   });
 
   async function onSubmit(values: z.infer<typeof formSchema>) {
     setLoading(true);
     try {
-      await signUp(values.email, values.password);
+      // Call the updated signUp function with additional data
+      await signUp({
+        email: values.email,
+        password: values.password,
+        firstName: values.firstName,
+        lastName: values.lastName,
+        dob: values.dob.getTime(), // Convert date to timestamp
+        tradingExperience: values.tradingExperience,
+      });
       router.push('/dashboard');
     } catch (error: any) {
       toast({
@@ -60,8 +82,9 @@ export function SignupForm() {
   async function handleGoogleSignIn() {
     setLoading(true);
     try {
+      // Google Sign-In redirect handled in AuthProvider
       await googleSignIn();
-      router.push('/dashboard');
+      // After redirect, AuthProvider will handle user creation and data collection
     } catch (error: any) {
       toast({
         variant: 'destructive',
@@ -93,6 +116,32 @@ export function SignupForm() {
           <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
             <FormField
               control={form.control}
+              name="firstName"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>First Name</FormLabel>
+                  <FormControl>
+                    <Input placeholder="First Name" {...field} />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            <FormField
+              control={form.control}
+              name="lastName"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Last Name</FormLabel>
+                  <FormControl>
+                    <Input placeholder="Last Name" {...field} />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            <FormField
+              control={form.control}
               name="email"
               render={({ field }) => (
                 <FormItem>
@@ -112,6 +161,59 @@ export function SignupForm() {
                   <FormLabel>Password</FormLabel>
                   <FormControl>
                     <Input type="password" placeholder="••••••••" {...field} />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+             <FormField
+              control={form.control}
+              name="dob"
+              render={({ field }) => (
+                <FormItem className="flex flex-col">
+                  <FormLabel>Date of Birth</FormLabel>
+                  <Popover>
+                    <PopoverTrigger asChild>
+                      <FormControl>
+                        <Button
+                          variant={"outline"}
+                          className={
+                            `w-full pl-3 text-left font-normal ${!field.value && "text-muted-foreground"}`
+                          }
+                        >
+                          {field.value ? (
+                            format(field.value, "PPP")
+                          ) : (
+                            <span>Pick a date</span>
+                          )}
+                          <CalendarIcon className="ml-auto h-4 w-4 opacity-50" />
+                        </Button>
+                      </FormControl>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-auto p-0" align="start">
+                      <Calendar
+                        mode="single"
+                        selected={field.value}
+                        onSelect={field.onChange}
+                        disabled={(date) =>
+                          date > new Date() || date < new Date("1900-01-01")
+                        }
+                        initialFocus
+                      />
+                    </PopoverContent>
+                  </Popover>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+             <FormField
+              control={form.control}
+              name="tradingExperience"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Trading Experience</FormLabel>
+                  <FormControl>
+                    <Input placeholder="e.g. Beginner, Intermediate, Advanced" {...field} />
                   </FormControl>
                   <FormMessage />
                 </FormItem>

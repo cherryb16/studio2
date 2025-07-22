@@ -13,6 +13,7 @@ import {
   ChartTooltipContent,
   type ChartConfig,
 } from '@/components/ui/chart';
+import { cn } from "@/lib/utils";
 
 const chartData = [
   { month: 'January', portfolio: 10000 },
@@ -30,9 +31,13 @@ const chartConfig = {
   },
 } satisfies ChartConfig;
 
-export function PerformanceChart() {
+interface PerformanceChartProps {
+  className?: string;
+}
+
+export function PerformanceChart({ className }: PerformanceChartProps) {
   return (
-    <Card>
+    <Card className={cn(className)}>
       <CardHeader>
         <CardTitle className='font-headline'>Performance Overview</CardTitle>
         <CardDescription>Your portfolio value over the last 6 months</CardDescription>
