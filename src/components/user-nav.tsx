@@ -11,12 +11,11 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 
-import { UserIcon } from 'lucide-react'; // Assuming UserIcon is imported from lucide-react
-import Link from 'next/link'; // Assuming Link is imported from next/link
+import { UserIcon, LogOut } from 'lucide-react';
+import Link from 'next/link';
+import { auth } from '@/lib/firebase';
+import { signOut } from 'firebase/auth';
 
-
-// Function to get initials from display name or email
-// This is a placeholder function, replace with your actual implementation
 const getInitials = (nameOrEmail?: string | null): string => {
   if (!nameOrEmail) return "";
 
@@ -40,16 +39,28 @@ interface UserNavProps {
 }
 
 export function UserNav({ user }: UserNavProps) {
-  // If getInitials is not defined here, it should be imported.
-  // For example: import { getInitials } from "@/lib/utils";
+
+  const handleSignOut = async () => {
+    try {
+      await signOut(auth);
+      // Redirect to login page or show a success message
+      // You might want to use Next.js router for navigation
+    } catch (error) {
+      console.error('Error signing out:', error);
+      // Show an error message to the user
+    }
+  };
 
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <Button variant="ghost" className="relative h-9 w-9 rounded-full">
           <Avatar className="h-9 w-9">
-            <AvatarImage src={user?.photoURL ?? ''} alt={user?.displayName ?? 'User'} />
-            <AvatarFallback>{getInitials(user?.displayName ?? user?.email)}</AvatarFallback>
+            {user?.photoURL ? (
+              <AvatarImage src={user.photoURL} alt={user.displayName ?? 'User'} />
+            ) : (
+              <AvatarFallback>{getInitials(user?.displayName ?? user?.email)}</AvatarFallback>
+            )}
           </Avatar>
         </Button>
       </DropdownMenuTrigger>
@@ -62,19 +73,21 @@ export function UserNav({ user }: UserNavProps) {
         </DropdownMenuLabel>
         <DropdownMenuSeparator />
         <DropdownMenuGroup>
-          <DropdownMenuItem asChild> {/* Use asChild to make it a Link */}
-            <Link href="/settings"> {/* Link to the settings page */}
-              <div> {/* Added a div to wrap the icon and text */}
+          <DropdownMenuItem asChild>
+            <Link href="/settings">
+              <div>
                 <UserIcon className="mr-2 h-4 w-4" />
                 <span>Settings</span>
               </div>
             </Link>
           </DropdownMenuItem>
-          {/* Add other DropdownMenuItems here */}
         </DropdownMenuGroup>
-        {/* Add other DropdownMenu content here */}
+        <DropdownMenuSeparator />
+        <DropdownMenuItem onClick={handleSignOut}>
+          <LogOut className="mr-2 h-4 w-4" />
+          <span>Log out</span>
+        </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
   )
 }
-
