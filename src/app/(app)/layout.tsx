@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import { UserNav } from "@/components/user-nav";
 import { auth } from '@/lib/firebase';
 import { onAuthStateChanged, User } from 'firebase/auth';
-import { AppSidebar } from '@/components/app-sidebar'; // Import AppSidebar
+import AppSidebar from '@/components/app-sidebar'; // Corrected Import
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);

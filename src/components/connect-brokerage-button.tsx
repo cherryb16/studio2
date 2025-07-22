@@ -1,50 +1,45 @@
-'use client';
+"use client";
 
-import { useState } from 'react';
-import { Button } from './ui/button';
-import { useAuth } from '@/hooks/use-auth';
-import { getSnapTradeLoginUrl } from '@/app/actions/snaptrade';
-import { toast } from './ui/use-toast';
-import { Icons } from './icons';
+import { useState } from "react";
+import { Button } from "@/components/ui/button";
+import { useToast } from "@/hooks/use-toast";
 
-export default function ConnectBrokerageButton() {
-    const { user } = useAuth();
-    const [isConnecting, setIsConnecting] = useState(false);
+export function ConnectBrokerageButton() {
+  const [loading, setLoading] = useState(false);
+  const [disabled, setDisabled] = useState(false);
+  const { toast } = useToast();
 
-    const handleConnectBrokerage = async () => {
-        if (!user) return;
-        setIsConnecting(true);
-        try {
-            const result = await getSnapTradeLoginUrl(user.uid);
-            if (result.data?.redirectUrl) {
-                window.location.href = result.data.redirectUrl;
-            } else {
-                toast({
-                    variant: 'destructive',
-                    title: 'Connection Failed',
-                    description: result.error || 'Could not get brokerage connection link.',
-                });
-            }
-        } catch (e) {
-            toast({
-                variant: 'destructive',
-                title: 'Connection Error',
-                description: 'An unexpected error occurred.',
-            });
-        } finally {
-            setIsConnecting(false);
-        }
-    };
+  const handleClick = async () => {
+    setLoading(true);
+    setDisabled(true);
+    try {
+      const response = await fetch("/api/snaptrade/create-connect-link");
+      const data = await response.json();
+      if (data.redirect_url) {
+        window.location.href = data.redirect_url;
+      } else {
+        toast({
+          title: "Error",
+          description: "Failed to create SnapTrade connect link.",
+          variant: "destructive",
+        });
+        setLoading(false);
+        setDisabled(false);
+      }
+    } catch (error) {
+      toast({
+        title: "Error",
+        description: "Failed to connect to SnapTrade. Please try again.",
+        variant: "destructive",
+      });
+      setLoading(false);
+      setDisabled(false);
+    }
+  };
 
-    return (
-        <Button
-            onClick={handleConnectBrokerage}
-            disabled={isConnecting}
-        >
-            {isConnecting && (
-                <Icons.spinner className="mr-2 h-4 w-4 animate-spin" />
-            )}
-            Connect Brokerage
-        </Button>
-    );
+  return (
+    <Button onClick={handleClick} disabled={disabled}>
+      Connect Brokerage
+    </Button>
+  );
 }
