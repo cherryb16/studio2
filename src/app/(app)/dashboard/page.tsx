@@ -55,35 +55,32 @@ const DashboardPage = () => {
     const credentialsAvailable = !!snaptradeUserId && !!userSecret;
 
 
-    // Use ActionReturnType for the data type
-    const { data: accounts, isLoading: accountsLoading, error: accountsError, refetch: refetchAccounts } = useQuery<ActionReturnType<Account[]>>({
+    // Fetch accounts (always fetch all to populate the dropdown)
+    const { data: accounts, isLoading: accountsLoading, error: accountsError } = useQuery<ActionReturnType<Account[]>>({
         queryKey: ['snaptradeAccounts', snaptradeUserId, userSecret],
         queryFn: () => getSnapTradeAccounts(firebaseUserId!, snaptradeUserId!, userSecret!),
         enabled: credentialsAvailable, // Only fetch when credentials are available
     });
 
-     // Use ActionReturnType for the data type
-    const { data: balances, isLoading: balancesLoading, error: balancesError, refetch: refetchBalances } = useQuery<ActionReturnType<Balance[]>>({
+     // Fetch balances based on selected account (this is for balances per currency)
+    const { data: balances, isLoading: balancesLoading, error: balancesError } = useQuery<ActionReturnType<Balance[]>>({
         queryKey: ['snaptradeBalances', snaptradeUserId, userSecret, selectedAccount],
         queryFn: () => getSnapTradeBalances(snaptradeUserId!, userSecret!, selectedAccount),
         enabled: credentialsAvailable, // Only fetch when credentials are available
     });
 
-     // Use ActionReturnType for the data type (adjusting for the expected return of getAllPositions)
-     // Assuming getAllPositions returns Position[] or { error: any }
-     const { data: allPositions, isLoading: positionsLoading, error: positionsError, refetch: refetchPositions } = useQuery<ActionReturnType<Position[]>>({
+     // Fetch positions based on selected account
+     const { data: allPositions, isLoading: positionsLoading, error: positionsError } = useQuery<ActionReturnType<Position[]>>({
         queryKey: ['snaptradePositions', snaptradeUserId, userSecret, selectedAccount],
         queryFn: () => getAllPositions(snaptradeUserId!, userSecret!, selectedAccount),
         enabled: credentialsAvailable, // Only fetch when credentials are available
     });
 
-    // Assuming you have a function to fetch activities (trades) in your actions file
-    // Replace 'getSnapTradeActivities' with the actual function name if different
-     // Use ActionReturnType for the data type
-    const { data: activities, isLoading: activitiesLoading, error: activitiesError, refetch: refetchActivities } = useQuery<ActionReturnType<AccountUniversalActivity[]>>({
+    // Fetch activities based on selected account
+    const { data: activities, isLoading: activitiesLoading, error: activitiesError } = useQuery<ActionReturnType<AccountUniversalActivity[]>>({
         queryKey: ['snaptradeActivities', snaptradeUserId, userSecret, selectedAccount],
         queryFn: async () => {
-             // You might need a specific action to get activities or use getAccountActivities from SDK in an action
+             // You might need a specific action to get activities based on accountId
              // For now, returning an empty array as a placeholder. Replace with actual fetching logic using your actions
              return [];
         },
@@ -94,38 +91,50 @@ const DashboardPage = () => {
     const dataError = credentialsError || (accounts as any)?.error || (balances as any)?.error || (allPositions as any)?.error || (activities as any)?.error;
 
 
-    const handleRefresh = () => {
-        refetchAccounts();
-        refetchBalances();
-        refetchPositions();
-        refetchActivities();
-    };
-
      // Safely access data and handle potential error objects
     const accountData = accounts && !('error' in accounts) ? accounts : [];
     const balanceData = balances && !('error' in balances) ? balances : [];
     const positionData = allPositions && !('error' in allPositions) ? allPositions : [];
     const activityData = activities && !('error' in activities) ? activities : [];
 
-    // Calculate total balance from balances data, handling potential null/undefined cash
-    const totalAccountBalance = Array.isArray(balanceData) ? balanceData.reduce((sum, balance) => sum + (balance.cash || 0), 0) : 0;
+    // Calculate total balance based on selected account
+    const totalAccountBalance = selectedAccount
+        ? (accountData as Account[]).find(account => account.id === selectedAccount)?.balance?.total?.amount || 0
+        : Array.isArray(accountData) ? accountData.reduce((sum, account) => sum + (account.balance?.total?.amount || 0), 0) : 0;
 
-    // Calculate total market value from allPositions data
-    // Note: The structure of position data might differ based on your action's return type
-    const totalMarketValue = Array.isArray(positionData) ? positionData.reduce((sum, position) => sum + (position.market_value || 0), 0) : 0;
-
-    // Filter open positions
-     // Note: The structure of position data might differ based on your action's return type
-     // Assuming position.symbol?.symbol?.type?.code === 'cs' for equities and position.symbol?.option_symbol for options
+    // Filter and calculate total market value for equities
     const openEquities = Array.isArray(positionData) ? positionData.filter(position => position.symbol?.symbol?.type?.code === 'cs' && position.units !== 0) : [];
+    const totalEquitiesValue = Array.isArray(openEquities) ? openEquities.reduce((sum, position) => {
+        console.log("Processing Equity Position for Market Value:", position, "Current Sum:", sum);
+        return sum + (position.market_value || 0);
+    }, 0) : 0;
+
+    // Filter and calculate total market value for options
     const openOptions = Array.isArray(positionData) ? positionData.filter(position => position.symbol?.option_symbol && position.units !== 0) : [];
+    const totalOptionsValue = Array.isArray(openOptions) ? openOptions.reduce((sum, position) => {
+         console.log("Processing Option Position for Market Value:", position, "Current Sum:", sum);
+        return sum + ((position.price || 0) * (position.units || 0) * 100); // Calculate using price * units * 100
+    }, 0) : 0;
 
-    // Calculate total unrealized profit/loss
-     // Note: The structure of position data might differ based on your action's return type
-    const totalUnrealizedPL = Array.isArray(positionData) ? positionData.reduce((sum, position) => sum + (position.unrealized_profit_loss || 0), 0) : 0;
 
-    // Calculate win rate from activities data
-    // Note: You will need to implement the logic to determine winning trades from the activity data
+    // Calculate total unrealized profit/loss (from positions data)
+    const totalUnrealizedPL = Array.isArray(positionData) ? positionData.reduce((sum, position) => {
+        console.log("Processing Position for Unrealized P/L:", position, "Current Sum:", sum);
+        let pnl = 0;
+        if (position.symbol?.option_symbol) {
+            // Calculate P/L for options using derived value and average_purchase_price
+            const calculatedValue = (position.price || 0) * (position.units || 0) * 100;
+            const averageCost = (position.average_purchase_price || 0) * (position.units || 0); // Multiply by units and 100
+            pnl = calculatedValue - averageCost;
+        } else {
+            // Use unrealized_profit_loss for equities
+            pnl = position.unrealized_profit_loss || 0;
+        }
+        console.log("Processing Position for Unrealized P/L:", position, "Calculated P/L:", pnl, "Current Sum:", sum);
+        return sum + pnl;
+    }, 0) : 0;
+
+    // Calculate win rate from activities data (which will be for the selected account or all)
     const trades = Array.isArray(activityData) ? activityData.filter(activity => activity.type === 'TRADE') : []; // Assuming 'TRADE' is the type for trades
     const totalTrades = trades.length;
      // You'll need to determine how to identify winning trades from the activity data
@@ -162,10 +171,6 @@ const DashboardPage = () => {
                                 </option>
                             ))}
                         </select>
-                        <Button onClick={handleRefresh} disabled={isLoading}>
-                            <RefreshCw className={`mr-2 h-4 w-4 ${isLoading ? 'animate-spin' : ''}`} />
-                            Refresh
-                        </Button>
                     </div>
                 </div>
 
@@ -183,36 +188,36 @@ const DashboardPage = () => {
                                     </CardTitle>
                                 </CardHeader>
                                 <CardContent>
-                                    <div className="text-2xl font-bold">${totalAccountBalance.toFixed(2)}</div>
+                                    <div className="text-2xl font-bold">${totalAccountBalance.toLocaleString()}</div>
                                 </CardContent>
                             </Card>
                             <Card>
                                 <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                                     <CardTitle className="text-sm font-medium">
-                                        Total Market Value
+                                        Total Equities Value
                                     </CardTitle>
                                 </CardHeader>
                                 <CardContent>
-                                    <div className="text-2xl font-bold">${totalMarketValue.toFixed(2)}</div>
+                                    <div className="text-2xl font-bold">${totalEquitiesValue.toLocaleString()}</div>
                                 </CardContent>
                             </Card>
                             <Card>
                                 <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                                    <CardTitle className="text-sm font-medium">Win Rate</CardTitle>
+                                    <CardTitle className="text-sm font-medium">Total Options Value</CardTitle>
                                 </CardHeader>
                                 <CardContent>
-                                    <div className="text-2xl font-bold">{winRate.toFixed(2)}%</div>
+                                    <div className="text-2xl font-bold">${totalOptionsValue.toLocaleString()}</div>
                                 </CardContent>
                             </Card>
                             <Card>
                                 <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                                     <CardTitle className="text-sm font-medium">
-                                        Unrealized P/L
+                                        Unrealized Options P/L
                                     </CardTitle>
                                 </CardHeader>
                                 <CardContent>
                                     <div className={`text-2xl font-bold ${totalUnrealizedPL >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                                        ${totalUnrealizedPL.toFixed(2)}
+                                        {totalUnrealizedPL < 0 ? '-' : ''}${Math.abs(totalUnrealizedPL).toLocaleString()}
                                     </div>
                                 </CardContent>
                             </Card>
