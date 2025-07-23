@@ -106,7 +106,7 @@ const DashboardPage = () => {
     const openEquities = Array.isArray(positionData) ? positionData.filter(position => position.symbol?.symbol?.type?.code === 'cs' && position.units !== 0) : [];
     const totalEquitiesValue = Array.isArray(openEquities) ? openEquities.reduce((sum, position) => {
         console.log("Processing Equity Position for Market Value:", position, "Current Sum:", sum);
-        return sum + (position.market_value || 0);
+        return sum + ((position.price || 0) * (position.units || 0)); // Calculate using price * units
     }, 0) : 0;
 
     // Filter and calculate total market value for options
@@ -117,22 +117,24 @@ const DashboardPage = () => {
     }, 0) : 0;
 
 
-    // Calculate total unrealized profit/loss (from positions data)
-    const totalUnrealizedPL = Array.isArray(positionData) ? positionData.reduce((sum, position) => {
-        console.log("Processing Position for Unrealized P/L:", position, "Current Sum:", sum);
-        let pnl = 0;
-        if (position.symbol?.option_symbol) {
-            // Calculate P/L for options using derived value and average_purchase_price
-            const calculatedValue = (position.price || 0) * (position.units || 0) * 100;
-            const averageCost = (position.average_purchase_price || 0) * (position.units || 0); // Multiply by units and 100
-            pnl = calculatedValue - averageCost;
-        } else {
-            // Use unrealized_profit_loss for equities
-            pnl = position.unrealized_profit_loss || 0;
-        }
-        console.log("Processing Position for Unrealized P/L:", position, "Calculated P/L:", pnl, "Current Sum:", sum);
+    // Calculate total unrealized equities P/L
+    console.log("Open Equities for Unrealized P/L:", openEquities); // Log openEquities
+    const totalUnrealizedEquitiesPL = Array.isArray(openEquities) ? openEquities.reduce((sum, position) => {
+        console.log("Processing Equity Position for Unrealized P/L:", position, "Unrealized P/L (open_pnl):", position.open_pnl, "Current Sum:", sum); // Log each equity position and its open_pnl
+        return sum + (position.open_pnl || 0);
+    }, 0) : 0;
+    console.log("Total Unrealized Equities P/L:", totalUnrealizedEquitiesPL); // Log final total unrealized equities P/L
+
+    // Calculate total unrealized options P/L
+    const totalUnrealizedOptionsPL = Array.isArray(openOptions) ? openOptions.reduce((sum, position) => {
+        console.log("Processing Option Position for Unrealized P/L:", position, "Current Sum:", sum); // Log each option position
+        const calculatedValue = (position.price || 0) * (position.units || 0) * 100;
+        const averageCost = (position.average_purchase_price || 0) * (position.units || 0) * 100; // Multiply by units and 100
+        const pnl = calculatedValue - averageCost;
+        console.log("Processing Option Position for Unrealized P/L:", position, "Calculated P/L:", pnl, "Current Sum:", sum); // Log calculated P/L for options
         return sum + pnl;
     }, 0) : 0;
+    console.log("Total Unrealized Options P/L:", totalUnrealizedOptionsPL); // Log final total unrealized options P/L
 
     // Calculate win rate from activities data (which will be for the selected account or all)
     const trades = Array.isArray(activityData) ? activityData.filter(activity => activity.type === 'TRADE') : []; // Assuming 'TRADE' is the type for trades
@@ -212,12 +214,26 @@ const DashboardPage = () => {
                             <Card>
                                 <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                                     <CardTitle className="text-sm font-medium">
+                                        Unrealized Equities P/L
+                                    </CardTitle>
+                                </CardHeader>
+                                <CardContent>
+                                    <div className={`text-2xl font-bold ${totalUnrealizedEquitiesPL >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                                        {totalUnrealizedEquitiesPL < 0 ? '-' : ''}${Math.abs(totalUnrealizedEquitiesPL).toLocaleString()}
+                                    </div>
+                                </CardContent>
+                            </Card>
+                        </div>
+                        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4 mt-4">
+                             <Card className="col-span-4">
+                                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                                    <CardTitle className="text-sm font-medium">
                                         Unrealized Options P/L
                                     </CardTitle>
                                 </CardHeader>
                                 <CardContent>
-                                    <div className={`text-2xl font-bold ${totalUnrealizedPL >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                                        {totalUnrealizedPL < 0 ? '-' : ''}${Math.abs(totalUnrealizedPL).toLocaleString()}
+                                     <div className={`text-2xl font-bold ${totalUnrealizedOptionsPL >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                                        {totalUnrealizedOptionsPL < 0 ? '-' : ''}${Math.abs(totalUnrealizedOptionsPL).toLocaleString()}
                                     </div>
                                 </CardContent>
                             </Card>
