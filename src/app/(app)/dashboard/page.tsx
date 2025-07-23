@@ -1,142 +1,146 @@
 // src/app/(app)/dashboard/page.tsx
-"use client"
-import { DollarSign, LineChart, BarChart2, RefreshCw } from "lucide-react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { ScrollArea } from "@/components/ui/scroll-area";
-import { MetricCard } from "@/components/dashboard/metric-card"; // Corrected import
-// import PerformanceChart from "@/components/dashboard/performance-chart"; // PerformanceChart removed
-import { WinLossChart } from "@/components/dashboard/win-loss-chart"; // Corrected import
-import { useQuery } from "@tanstack/react-query";
-import { getSnapTradeAccounts, getSnapTradeBalances, getOpenEquities, getOpenOptions, getCash, getAllPositions } from "@/app/actions/snaptrade"; // Import getAllPositions
-import { useState, useEffect } from "react"; // Import useEffect
-import { Button } from "@/components/ui/button";
-import { useAuth } from "@/hooks/use-auth"; // Assuming you have a useAuth hook
-import {
-    Table,
-    TableBody,
-    TableCell,
-    TableHead,
-    TableHeader,
-    TableRow,
-} from "@/components/ui/table"; // Import table components
+'use client';
+
+import { promises as fs } from 'fs';
+import Head from 'next/head';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Download, PlusCircle, RefreshCw } from 'lucide-react';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
+import { ChartContainer, ChartTooltip, ChartTooltipContent } from '@/components/ui/chart';
+import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, BarChart, Bar } from 'recharts';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Badge } from '@/components/ui/badge';
+import { ScrollArea } from '@/components/ui/scroll-area';
+import { useEffect, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import { useAuth } from '@/hooks/use-auth';
+// Import types from snaptrade-typescript-sdk
+import { Account, Balance, Position, AccountUniversalActivity } from "snaptrade-typescript-sdk";
+
+// Import action functions
+import { getSnapTradeAccounts, getSnapTradeBalances, getAllPositions, getSnapTradePositions } from '@/app/actions/snaptrade'; // Assuming these are the correct action names
 
 
-export default function DashboardPage() {
-    const { user } = useAuth(); // Get the authenticated user
+// Define a union type for action return types to include potential errors
+type ActionReturnType<T> = T | { error: string };
+
+
+const DashboardPage = () => {
+    const { user, loading: authLoading } = useAuth();
+    const firebaseUserId = user?.uid;
+
     const [selectedAccount, setSelectedAccount] = useState<string | undefined>(undefined);
-    const [snaptradeUserId, setSnaptradeUserId] = useState<string | null>(null);
-    const [userSecret, setUserSecret] = useState<string | null>(null);
 
-
-    // Fetch SnapTrade credentials from Firestore
-    useEffect(() => {
-        const fetchCredentials = async () => {
-            if (user?.uid) {
-                // Assuming getSnapTradeCredentials is available in your snaptrade.ts actions
-                const credentials = await fetch('/api/snaptrade-credentials?firebaseUserId=' + user.uid).then(res => res.json()); // You'll need an API endpoint for this
-                if (credentials?.snaptradeUserId && credentials?.userSecret) {
-                    setSnaptradeUserId(credentials.snaptradeUserId);
-                    setUserSecret(credentials.userSecret);
-                } else {
-                    console.error("Failed to fetch SnapTrade credentials.");
-                    // Handle the case where credentials are not found
-                }
+    // Fetch Snaptrade credentials using firebaseUserId
+    const { data: snaptradeCredentials, isLoading: credentialsLoading, error: credentialsError } = useQuery<{ snaptradeUserId: string; userSecret: string }>({
+        queryKey: ['snaptradeCredentials', firebaseUserId],
+        queryFn: async () => {
+            if (!firebaseUserId) return Promise.reject('Firebase User ID not available');
+            const response = await fetch(`/api/snaptrade-credentials?firebaseUserId=${firebaseUserId}`);
+            if (!response.ok) {
+                throw new Error('Failed to fetch SnapTrade credentials');
             }
-        };
-        fetchCredentials();
-    }, [user?.uid]);
+            return response.json();
+        },
+        enabled: !!firebaseUserId, // Only fetch when firebaseUserId is available
+    });
+
+    const snaptradeUserId = snaptradeCredentials?.snaptradeUserId;
+    const userSecret = snaptradeCredentials?.userSecret;
+    const credentialsAvailable = !!snaptradeUserId && !!userSecret;
 
 
-    // Fetch accounts
-    const { data: accounts, isLoading: accountsLoading, error: accountsError } = useQuery({
+    // Use ActionReturnType for the data type
+    const { data: accounts, isLoading: accountsLoading, error: accountsError, refetch: refetchAccounts } = useQuery<ActionReturnType<Account[]>>({
         queryKey: ['snaptradeAccounts', snaptradeUserId, userSecret],
-        queryFn: () => {
-            if (snaptradeUserId && userSecret && user?.uid) {
-                return getSnapTradeAccounts(user.uid, snaptradeUserId, userSecret);
-            }
-            return Promise.resolve([]); // Return an empty array if credentials are not available yet
-        },
-        enabled: !!snaptradeUserId && !!userSecret && !!user?.uid, // Only fetch if credentials are available
+        queryFn: () => getSnapTradeAccounts(firebaseUserId!, snaptradeUserId!, userSecret!),
+        enabled: credentialsAvailable, // Only fetch when credentials are available
     });
 
-    // Fetch balances
-    const { data: balances, error: balanceError, isLoading: balanceLoading, refetch: refetchBalances } = useQuery({
-        queryKey: ['accountBalances', snaptradeUserId, userSecret, selectedAccount],
-        queryFn: () => {
-            if (snaptradeUserId && userSecret) {
-                return getSnapTradeBalances(snaptradeUserId, userSecret, selectedAccount);
-            }
-            return Promise.resolve([]);
-        },
-        enabled: !!snaptradeUserId && !!userSecret,
+     // Use ActionReturnType for the data type
+    const { data: balances, isLoading: balancesLoading, error: balancesError, refetch: refetchBalances } = useQuery<ActionReturnType<Balance[]>>({
+        queryKey: ['snaptradeBalances', snaptradeUserId, userSecret, selectedAccount],
+        queryFn: () => getSnapTradeBalances(snaptradeUserId!, userSecret!, selectedAccount),
+        enabled: credentialsAvailable, // Only fetch when credentials are available
     });
 
-    // Fetch open equities
-    const { data: openEquities, error: equitiesError, isLoading: equitiesLoading, refetch: refetchOpenEquities } = useQuery({
-        queryKey: ['openEquities', snaptradeUserId, userSecret, selectedAccount],
-        queryFn: () => {
-            if (snaptradeUserId && userSecret) {
-                 // Pass selectedAccount to filter equities by account
-                return getOpenEquities(snaptradeUserId, userSecret, selectedAccount);
-            }
-            return Promise.resolve(0);
-        },
-        enabled: !!snaptradeUserId && !!userSecret,
+     // Use ActionReturnType for the data type (adjusting for the expected return of getAllPositions)
+     // Assuming getAllPositions returns Position[] or { error: any }
+     const { data: allPositions, isLoading: positionsLoading, error: positionsError, refetch: refetchPositions } = useQuery<ActionReturnType<Position[]>>({
+        queryKey: ['snaptradePositions', snaptradeUserId, userSecret, selectedAccount],
+        queryFn: () => getAllPositions(snaptradeUserId!, userSecret!, selectedAccount),
+        enabled: credentialsAvailable, // Only fetch when credentials are available
     });
 
-    // Fetch open options
-    const { data: openOptions, error: optionsError, isLoading: optionsLoading, refetch: refetchOpenOptions } = useQuery({
-        queryKey: ['openOptions', snaptradeUserId, userSecret, selectedAccount],
-        queryFn: () => {
-             if (snaptradeUserId && userSecret) {
-                 // Pass selectedAccount to filter options by account
-                return getOpenOptions(snaptradeUserId, userSecret, selectedAccount);
-            }
-            return Promise.resolve(0);
+    // Assuming you have a function to fetch activities (trades) in your actions file
+    // Replace 'getSnapTradeActivities' with the actual function name if different
+     // Use ActionReturnType for the data type
+    const { data: activities, isLoading: activitiesLoading, error: activitiesError, refetch: refetchActivities } = useQuery<ActionReturnType<AccountUniversalActivity[]>>({
+        queryKey: ['snaptradeActivities', snaptradeUserId, userSecret, selectedAccount],
+        queryFn: async () => {
+             // You might need a specific action to get activities or use getAccountActivities from SDK in an action
+             // For now, returning an empty array as a placeholder. Replace with actual fetching logic using your actions
+             return [];
         },
-         enabled: !!snaptradeUserId && !!userSecret,
+        enabled: credentialsAvailable, // Only fetch when credentials are available
     });
 
-    // Fetch cash
-    const { data: cash, error: cashError, isLoading: cashLoading, refetch: refetchCash } = useQuery({
-        queryKey: ['cash', snaptradeUserId, userSecret, selectedAccount],
-        queryFn: () => {
-             if (snaptradeUserId && userSecret) {
-                 // Pass selectedAccount to filter cash by account
-                return getCash(snaptradeUserId, userSecret, selectedAccount);
-            }
-             return Promise.resolve(0);
-        },
-         enabled: !!snaptradeUserId && !!userSecret,
-    });
+    const isLoading = authLoading || credentialsLoading || accountsLoading || balancesLoading || positionsLoading || activitiesLoading;
+    const dataError = credentialsError || (accounts as any)?.error || (balances as any)?.error || (allPositions as any)?.error || (activities as any)?.error;
 
-     // Fetch all positions (for the table)
-     const { data: allPositions, error: allPositionsError, isLoading: allPositionsLoading, refetch: refetchAllPositions } = useQuery({
-        queryKey: ['allPositions', snaptradeUserId, userSecret, selectedAccount],
-        queryFn: () => {
-             if (snaptradeUserId && userSecret) {
-                return getAllPositions(snaptradeUserId, userSecret, selectedAccount); // Pass selectedAccount
-             }
-             return Promise.resolve([]);
-        },
-         enabled: !!snaptradeUserId && !!userSecret,
-    });
-
-
-    const isLoading = accountsLoading || balanceLoading || equitiesLoading || optionsLoading || cashLoading || allPositionsLoading;
-    const dataError = accountsError || balanceError || equitiesError || optionsError || cashError || allPositionsError;
 
     const handleRefresh = () => {
+        refetchAccounts();
         refetchBalances();
-        refetchOpenEquities();
-        refetchOpenOptions();
-        refetchCash();
-        refetchAllPositions(); // Refetch all positions as well
+        refetchPositions();
+        refetchActivities();
     };
 
-     // Calculate total balance from balances data, handling potential null/undefined cash
-    const totalAccountBalance = Array.isArray(balances) ? balances.reduce((sum, balance) => sum + (balance.cash || 0), 0) : 0;
+     // Safely access data and handle potential error objects
+    const accountData = accounts && !('error' in accounts) ? accounts : [];
+    const balanceData = balances && !('error' in balances) ? balances : [];
+    const positionData = allPositions && !('error' in allPositions) ? allPositions : [];
+    const activityData = activities && !('error' in activities) ? activities : [];
 
+    // Calculate total balance from balances data, handling potential null/undefined cash
+    const totalAccountBalance = Array.isArray(balanceData) ? balanceData.reduce((sum, balance) => sum + (balance.cash || 0), 0) : 0;
+
+    // Calculate total market value from allPositions data
+    // Note: The structure of position data might differ based on your action's return type
+    const totalMarketValue = Array.isArray(positionData) ? positionData.reduce((sum, position) => sum + (position.market_value || 0), 0) : 0;
+
+    // Filter open positions
+     // Note: The structure of position data might differ based on your action's return type
+     // Assuming position.symbol?.symbol?.type?.code === 'cs' for equities and position.symbol?.option_symbol for options
+    const openEquities = Array.isArray(positionData) ? positionData.filter(position => position.symbol?.symbol?.type?.code === 'cs' && position.units !== 0) : [];
+    const openOptions = Array.isArray(positionData) ? positionData.filter(position => position.symbol?.option_symbol && position.units !== 0) : [];
+
+    // Calculate total unrealized profit/loss
+     // Note: The structure of position data might differ based on your action's return type
+    const totalUnrealizedPL = Array.isArray(positionData) ? positionData.reduce((sum, position) => sum + (position.unrealized_profit_loss || 0), 0) : 0;
+
+    // Calculate win rate from activities data
+    // Note: You will need to implement the logic to determine winning trades from the activity data
+    const trades = Array.isArray(activityData) ? activityData.filter(activity => activity.type === 'TRADE') : []; // Assuming 'TRADE' is the type for trades
+    const totalTrades = trades.length;
+     // You'll need to determine how to identify winning trades from the activity data
+    const winningTrades = 0; // Placeholder - requires logic to determine winning trades from activities
+    const winRate = totalTrades > 0 ? (winningTrades / totalTrades) * 100 : 0;
+
+    // Show loading state while authenticating or fetching credentials
+    if (authLoading || credentialsLoading) {
+        return <div>Loading...</div>;
+    }
+
+    // Show error if authentication fails or credentials fetching fails
+    if (!user || credentialsError) {
+        return <div className="text-red-500">Error loading user data or SnapTrade credentials. Please try again.</div>;
+    }
 
     return (
         <ScrollArea className="h-full">
@@ -144,14 +148,15 @@ export default function DashboardPage() {
                 <div className="flex items-center justify-between space-y-2">
                     <h2 className="text-3xl font-bold tracking-tight">Dashboard</h2>
                     <div className="flex items-center space-x-2">
-                         <select
+                        <select
                             value={selectedAccount || 'all'}
                             onChange={(e) => setSelectedAccount(e.target.value === 'all' ? undefined : e.target.value)}
                             className="p-2 border rounded-md"
-                             disabled={accountsLoading || !!accountsError} // Disable while loading accounts or if there's an account error
+                            disabled={accountsLoading || !!accountsError} // Disable while loading accounts or if there's an account error
                         >
+                            {/* Safely map over accountData */}
                             <option value="all">All Accounts</option>
-                            {accounts && Array.isArray(accounts) && accounts.map((account: any) => (
+                            {accountData && Array.isArray(accountData) && accountData.map((account) => (
                                 <option key={account.id} value={account.id}>
                                     {account.name} ({account.institution_name})
                                 </option>
@@ -163,86 +168,99 @@ export default function DashboardPage() {
                         </Button>
                     </div>
                 </div>
-                {isLoading ? (
-                    <div>Loading...</div>
-                ) : dataError ? (
-                    <div>Error: {dataError instanceof Error ? dataError.message : 'An unknown error occurred'}</div>
-                ) : (
+
+                {dataError && (
+                    <div className="text-red-500">Error loading data. Please try again.</div>
+                )}
+
+                {!dataError && (
                     <>
                         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-                            <MetricCard title="Total Account Balance" value={`$${totalAccountBalance.toFixed(2)}`} icon={DollarSign} />
-                            {/* Added checks for undefined before calling toString() */}
-                            <MetricCard title="Open Equities" value={openEquities !== undefined && openEquities !== null ? openEquities.toString() : 'N/A'} icon={LineChart} />
-                            <MetricCard title="Open Options" value={openOptions !== undefined && openOptions !== null ? openOptions.toString() : 'N/A'} icon={BarChart2} />
-                            {/* Calculate cash by summing up cash from all balances, handling potential null/undefined */}
-                            <MetricCard title="Cash" value={`$${(Array.isArray(balances) ? balances.reduce((sum, balance) => sum + (balance.cash || 0), 0) : 0).toFixed(2)}`} icon={DollarSign} />
+                            <Card>
+                                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                                    <CardTitle className="text-sm font-medium">
+                                        Total Account Balance
+                                    </CardTitle>
+                                </CardHeader>
+                                <CardContent>
+                                    <div className="text-2xl font-bold">${totalAccountBalance.toFixed(2)}</div>
+                                </CardContent>
+                            </Card>
+                            <Card>
+                                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                                    <CardTitle className="text-sm font-medium">
+                                        Total Market Value
+                                    </CardTitle>
+                                </CardHeader>
+                                <CardContent>
+                                    <div className="text-2xl font-bold">${totalMarketValue.toFixed(2)}</div>
+                                </CardContent>
+                            </Card>
+                            <Card>
+                                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                                    <CardTitle className="text-sm font-medium">Win Rate</CardTitle>
+                                </CardHeader>
+                                <CardContent>
+                                    <div className="text-2xl font-bold">{winRate.toFixed(2)}%</div>
+                                </CardContent>
+                            </Card>
+                            <Card>
+                                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                                    <CardTitle className="text-sm font-medium">
+                                        Unrealized P/L
+                                    </CardTitle>
+                                </CardHeader>
+                                <CardContent>
+                                    <div className={`text-2xl font-bold ${totalUnrealizedPL >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                                        ${totalUnrealizedPL.toFixed(2)}
+                                    </div>
+                                </CardContent>
+                            </Card>
                         </div>
-                        {/* Display All Positions in a table */}
-                        {allPositions && Array.isArray(allPositions) && allPositions.length > 0 && (
-                             <div className="space-y-4">
-                                <h3 className="text-2xl font-bold tracking-tight">All Positions</h3>
-                                <div className="rounded-md border">
-                                <Table>
-                                    <TableHeader>
-                                        <TableRow>
-                                            <TableHead>Symbol</TableHead>
-                                            <TableHead>Description</TableHead>
-                                            <TableHead>Units</TableHead>
-                                            <TableHead>Price</TableHead>
-                                            <TableHead>Average Purchase Price</TableHead>
-                                            <TableHead>Open PnL</TableHead>
-                                            <TableHead>Account</TableHead>
-                                        </TableRow>
-                                    </TableHeader>
-                                    <TableBody>
-                                        {console.log("allPositions before filter:", allPositions)}
-                                        {allPositions
-                                            .filter(position => {
-                                                console.log("Filtering position:", position, "Is Array and empty:", Array.isArray(position) && position.length === 0);
-                                                return !(Array.isArray(position) && position.length === 0);
-                                            })
-                                            .map((position: any, index: number) => {
-                                                let symbolString = 'N/A'; // Initialize with a default string
-
-                                                if (position.symbol) {
-                                                    if (position.symbol.symbol) {
-                                                        symbolString = position.symbol.symbol;
-                                                    } else if (position.symbol.option_symbol?.ticker) {
-                                                        symbolString = position.symbol.option_symbol.ticker;
-                                                    }
-                                                }
-
-                                                console.log("position.symbol (detailed):", JSON.stringify(position.symbol, null, 2)); // Detailed log
-
-                                                return (
-                                                    <TableRow key={index}>
-                                                        <TableCell>{symbolString}</TableCell>
-                                                        <TableCell>{position.symbol?.description || 'N/A'}</TableCell>
-                                                        <TableCell>{String(position.units) || 'N/A'}</TableCell>
-                                                        <TableCell>{String(position.price) || 'N/A'}</TableCell>
-                                                        <TableCell>{String(position.average_purchase_price) || 'N/A'}</TableCell>
-                                                        <TableCell>{String(position.open_pnl) || 'N/A'}</TableCell>
-                                                        {/* Find the account name for the position */}
-                                                        <TableCell>
-                                                            {accounts && Array.isArray(accounts)
-                                                                ? accounts.find((acc: any) => acc.id === position.account_id)?.name || 'N/A'
-                                                                : 'N/A'}
-                                                        </TableCell>
-                                                    </TableRow>
-                                                );
-                                            })}
-                                    </TableBody>
-                                </Table>
-                                </div>
-                            </div>
-                        )}
-
                         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-7">
-                            <WinLossChart className="col-span-3" />
+                            <Card className="col-span-4">
+                                <CardHeader>
+                                    <CardTitle>Overview</CardTitle>
+                                </CardHeader>
+                                <CardContent className="pl-2">
+                                    {/* Chart Placeholder */}
+                                    <div className="h-[300px] w-full bg-gray-200 flex items-center justify-center rounded-md">
+                                        Chart will be here
+                                    </div>
+                                </CardContent>
+                            </Card>
+                            <Card className="col-span-3">
+                                <CardHeader>
+                                    <CardTitle>Open Positions</CardTitle>
+                                    <CardDescription>
+                                        You have {openEquities.length} equity and {openOptions.length} option positions open.
+                                    </CardDescription>
+                                </CardHeader>
+                                <CardContent>
+                                    {/* Open Positions List Placeholder */}
+                                    <div className="h-[300px] w-full bg-gray-200 flex items-center justify-center rounded-md">
+                                        Open Positions list will be here
+                                    </div>
+                                </CardContent>
+                            </Card>
                         </div>
+
+                        <Card>
+                            <CardHeader>
+                                <CardTitle>Recent Trades</CardTitle>
+                            </CardHeader>
+                            <CardContent>
+                                {/* Recent Trades Table Placeholder */}
+                                <div className="h-[300px] w-full bg-gray-200 flex items-center justify-center rounded-md">
+                                    Recent Trades table will be here
+                                </div>
+                            </CardContent>
+                        </Card>
                     </>
                 )}
             </div>
         </ScrollArea>
     );
-}
+};
+
+export default DashboardPage;
