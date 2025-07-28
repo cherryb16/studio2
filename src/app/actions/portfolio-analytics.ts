@@ -38,12 +38,12 @@ interface OptionPosition {
 }
 
 interface HoldingsData {
-  account: any;
-  balances: Balance[];
-  positions: Position[];
-  option_positions: OptionPosition[];
-  orders: any[];
-  total_value: { value: number; currency: string };
+  account?: any;
+  balances?: Balance[] | null;
+  positions?: Position[] | null;
+  option_positions?: OptionPosition[] | null;
+  orders?: any[] | null;
+  total_value?: { value: number; currency: string } | null;
 }
 
 // ==================== BALANCE CALCULATIONS ====================
