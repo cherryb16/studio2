@@ -2,31 +2,19 @@
 'use server';
 import { db } from '@/lib/firebase-admin';
 import { Snaptrade } from "snaptrade-typescript-sdk";
-import { UserIDandSecret, AuthenticationLoginSnapTradeUser200Response, EncryptedResponse, AccountHoldingsAccount, Balance, Account } from "snaptrade-typescript-sdk";
+import { UserIDandSecret, Balance, Account } from "snaptrade-typescript-sdk";
 
-// Add this type for the SnapTrade registration response
-interface SnapTradeRegistrationSuccessResponse extends UserIDandSecret {
-  // Add any other properties present in a successful registration response
-}
-
-// Correcting LoginRedirectURI based on the error output
-interface LoginRedirectURI {
-  redirectURI: string; // Corrected property name
-  sessionId?: string; // Added sessionId based on output
-  // Add any other properties present in LoginRedirectURI
-}
-
-// Initialize Snaptrade - make sure to use environment variables
+// Initialize Snaptrade
 export const snaptrade = new Snaptrade({
   clientId: process.env.SNAPTRADE_CLIENT_ID || '',
   consumerKey: process.env.SNAPTRADE_SECRET || '',
 });
 
+// ==================== AUTHENTICATION & USER MANAGEMENT ====================
 
 export async function getSnapTradeLoginUrl(firebaseUserId: string) {
   console.log('Firebase User ID:', firebaseUserId);
 
-  const snaptradeAPI = 'https://api.snaptrade.com/api/v1';
   const clientId = process.env.SNAPTRADE_CLIENT_ID;
   const secret = process.env.SNAPTRADE_SECRET;
 
@@ -36,457 +24,316 @@ export async function getSnapTradeLoginUrl(firebaseUserId: string) {
   }
 
   try {
-    // 1. Check if user already exists in SnapTrade
+    // Check if user already exists in SnapTrade
     const userListResponse = await snaptrade.authentication.listSnapTradeUsers();
-    console.log('SnapTrade Users:', userListResponse.data);
     const existingUserInSnapTrade = userListResponse.data.find((userIdString: string) => userIdString === firebaseUserId);
 
     let userSecretToUse = null;
-    let snaptradeUserIdToUse = null; // Variable to store the snaptradeUserId
+    let snaptradeUserIdToUse = null;
 
     if (existingUserInSnapTrade) {
       console.log(`SnapTrade user with ID ${firebaseUserId} already exists.`);
-      // Try to get credentials from Firestore (from the correct collection and with correct casing)
       const firestoreCredentials = await getSnapTradeCredentials(firebaseUserId);
+      
       if (firestoreCredentials) {
-        snaptradeUserIdToUse = firestoreCredentials.snaptradeUserId; // Get snaptradeUserId
-        userSecretToUse = firestoreCredentials.userSecret; // Get snaptradeUserSecret
+        snaptradeUserIdToUse = firestoreCredentials.snaptradeUserId;
+        userSecretToUse = firestoreCredentials.userSecret;
         console.log('SnapTrade credentials found in Firestore.');
       } else {
-        console.log('SnapTrade credentials not found in Firestore. Re-registering with SnapTrade...');
-        // If credentials not in Firestore, re-register to get a new userSecret
-        // Use SDK function for registration as well for consistency
+        console.log('SnapTrade credentials not found in Firestore. Re-registering...');
         const registerResponse = await snaptrade.authentication.registerSnapTradeUser({
           userId: firebaseUserId
         });
 
-        // Assuming successful registration response directly contains userId and userSecret
-        // If the SDK throws an error on failure, the catch block will handle it.
-        const registrationData = registerResponse.data as UserIDandSecret; // Cast to UserIDandSecret
-
+        const registrationData = registerResponse.data as UserIDandSecret;
         if (!registrationData || !registrationData.userId || !registrationData.userSecret) {
-             console.error('SnapTrade re-registration failed: Invalid response data', registerResponse.data);
-             return { error: 'Failed to re-register user with SnapTrade: Invalid response.' };
+          console.error('SnapTrade re-registration failed');
+          return { error: 'Failed to re-register user with SnapTrade.' };
         }
 
-        snaptradeUserIdToUse = registrationData.userId; // Get snaptradeUserId from registration
-        userSecretToUse = registrationData.userSecret; // Get snaptradeUserSecret from registration
+        snaptradeUserIdToUse = registrationData.userId;
+        userSecretToUse = registrationData.userSecret;
 
-        // Store the new userSecret in Firestore (in the correct collection and with correct casing)
-        try {
-          await db.collection('snaptrade_users').doc(firebaseUserId).set({
-            snaptradeUserID: registrationData.userId, // Corrected casing
-            snaptradeUserSecret: registrationData.userSecret, // Corrected casing
-            snaptradeRegisteredAt: new Date().toISOString(), // Update registration time
-          }, { merge: true });
-          console.log('Newly obtained SnapTrade credentials stored in Firestore.');
-        } catch (firestoreError) {
-          console.error('Failed to store newly obtained SnapTrade credentials:', firestoreError);
-          // Decide how to handle this error - proceed without storing or return error?
-        }
+        await saveSnapTradeCredentials(firebaseUserId, registrationData);
       }
-    }
-
-    // User does not exist in SnapTrade, register them for the first time
-    if (!existingUserInSnapTrade) { // Moved this block inside the else for clarity
-      console.log(`SnapTrade user with ID ${firebaseUserId} not found, registering...`);
-      // Use SDK function for initial registration
+    } else {
+      // Register new user
+      console.log(`Registering new SnapTrade user: ${firebaseUserId}`);
       const registerResponse = await snaptrade.authentication.registerSnapTradeUser({
         userId: firebaseUserId
       });
 
-       // Assuming successful registration response directly contains userId and userSecret
-        // If the SDK throws an error on failure, the catch block will handle it.
-      const registrationData = registerResponse.data as UserIDandSecret; // Cast to UserIDandSecret
-
+      const registrationData = registerResponse.data as UserIDandSecret;
       if (!registrationData || !registrationData.userId || !registrationData.userSecret) {
-          console.error('SnapTrade initial registration failed: Invalid response data', registerResponse.data);
-          return { error: 'Failed to register user with SnapTrade: Invalid response.' };
-       }
-
-      snaptradeUserIdToUse = registrationData.userId; // Get snaptradeUserId from registration
-      userSecretToUse = registrationData.userSecret; // Get snaptradeUserSecret from registration
-
-      // Store the userSecret in Firestore (only for new users - in the correct collection and with correct casing)
-      try {
-        await db.collection('snaptrade_users').doc(firebaseUserId).set({
-          snaptradeUserID: registrationData.userId, // Corrected casing
-          snaptradeUserSecret: registrationData.userSecret,
-          snaptradeRegisteredAt: new Date().toISOString(),
-        }, { merge: true });
-        console.log('Initial SnapTrade credentials stored in Firestore.');
-      } catch (firestoreError) {
-        console.error('Failed to store initial SnapTrade credentials:', firestoreError);
-        // Decide how to handle this error - proceed without storing or return error?
+        console.error('SnapTrade registration failed');
+        return { error: 'Failed to register user with SnapTrade.' };
       }
+
+      snaptradeUserIdToUse = registrationData.userId;
+      userSecretToUse = registrationData.userSecret;
+
+      await saveSnapTradeCredentials(firebaseUserId, registrationData);
     }
 
-    // 4. Get the redirect URL using the obtained userSecret and snaptradeUserId
+    // Get redirect URL
     if (!userSecretToUse || !snaptradeUserIdToUse) {
-        console.error('User secret or SnapTrade User ID not available to get login URL.');
-        return { error: 'User credentials or SnapTrade User ID missing.' };
+      console.error('User credentials missing');
+      return { error: 'User credentials missing.' };
     }
 
-    // Use the SDK function for login
     const loginResponse = await snaptrade.authentication.loginSnapTradeUser({
-      userId: snaptradeUserIdToUse, // Use snaptradeUserId here
+      userId: snaptradeUserIdToUse,
       userSecret: userSecretToUse,
       immediateRedirect: true,
-      connectionPortalVersion: "v4", // Specify connection portal version
+      connectionPortalVersion: "v4",
       customRedirect: process.env.SNAPTRADE_REDIRECT_URI,
     });
 
-    // Check if the response has the redirectURI property
-    if (loginResponse.data && typeof loginResponse.data === 'object' && 'redirectURI' in loginResponse.data) {
-      const loginData = loginResponse.data as LoginRedirectURI; // Cast to LoginRedirectURI
-      return { data: { redirectUrl: loginData.redirectURI } }; // Access redirectURI
-    } else {
-        // Handle the case where the response is not a LoginRedirectURI
-        console.error('SnapTrade login URL request failed: Unexpected response type', loginResponse.data);
-         // It's possible that error responses have a different structure
-         // If the SDK throws an error on failure, the catch block will handle it.
-        return { error: 'Failed to get SnapTrade login URL: Unexpected response.' };
+    if (loginResponse.data && 'redirectURI' in loginResponse.data) {
+      return { data: { redirectUrl: (loginResponse.data as any).redirectURI } };
     }
 
+    return { error: 'Failed to get SnapTrade login URL.' };
+
   } catch (error) {
-    console.error('An error occurred during SnapTrade process:', error);
-     // Attempt to extract error message if it's an object with a message property
-    if (error !== null && typeof error === 'object' && 'message' in error) {
-        return { error: error.message as string };
-    } else {
-        return { error: 'An unexpected error occurred.' };
-    }
+    console.error('SnapTrade process error:', error);
+    return { error: error instanceof Error ? error.message : 'An unexpected error occurred.' };
   }
 }
 
 export async function getSnapTradeCredentials(firebaseUserId: string) {
   try {
-    console.log('Attempting to get SnapTrade credentials for user:', firebaseUserId); // Added log
     const userDoc = await db.collection('snaptrade_users').doc(firebaseUserId).get();
 
     if (userDoc.exists) {
-      console.log('Firestore document found.'); // Added log
       const data = userDoc.data();
-      console.log('Firestore document data:', data); // Added log
-
-      // Access with correct casing
       const snaptradeUserId = data?.snaptradeUserID;
       const userSecret = data?.snaptradeUserSecret;
 
-      console.log('Retrieved snaptradeUserId:', snaptradeUserId); // Added log
-      console.log('Retrieved userSecret:', userSecret); // Added log
-
       if (snaptradeUserId && userSecret) {
-        console.log('SnapTrade credentials successfully retrieved.'); // Added log
         return {
-          snaptradeUserId: snaptradeUserId,
-          userSecret: userSecret,
+          snaptradeUserId,
+          userSecret,
         };
-      } else {
-        console.error('SnapTrade credentials missing or incomplete in Firestore for user:', firebaseUserId); // Modified log
-        return null;
       }
     }
-     else {
-      console.error('SnapTrade document not found in Firestore for user:', firebaseUserId); // Added log
-      return null;
-    }
+    return null;
   } catch (error) {
-    console.error('Error getting SnapTrade credentials from Firestore:', error); // Added log
+    console.error('Error getting SnapTrade credentials:', error);
     return null;
   }
 }
 
-export async function getSnapTradeAccounts(firebaseUserId: string, snaptradeUserId: string, userSecret: string) {
+async function saveSnapTradeCredentials(firebaseUserId: string, credentials: UserIDandSecret) {
   try {
-    const accountsResponse = await snaptrade.accountInformation.listUserAccounts({ // Corrected
+    await db.collection('snaptrade_users').doc(firebaseUserId).set({
+      snaptradeUserID: credentials.userId,
+      snaptradeUserSecret: credentials.userSecret,
+      snaptradeRegisteredAt: new Date().toISOString(),
+    }, { merge: true });
+    console.log('SnapTrade credentials stored in Firestore.');
+  } catch (error) {
+    console.error('Failed to store SnapTrade credentials:', error);
+  }
+}
+
+// ==================== ACCOUNT FUNCTIONS ====================
+
+export async function getSnapTradeAccounts(
+  snaptradeUserId: string, 
+  userSecret: string
+): Promise<Account[] | { error: string }> {
+  try {
+    const accountsResponse = await snaptrade.accountInformation.listUserAccounts({
       userId: snaptradeUserId,
       userSecret: userSecret,
     });
 
-    // No need to store account IDs in Firestore here. We will fetch them every time
-    // the dashboard loads to ensure we have the most up-to-date list.
-    // await db.collection('users').doc(firebaseUserId).set({
-    //   snaptradeAccountIds: accountIds,
-    // }, { merge: true });
-
-    console.log('SnapTrade accounts fetched.');
-
     return accountsResponse.data;
   } catch (error) {
     console.error("Error fetching SnapTrade accounts:", error);
-    // Return a consistent error structure
     return { error: "Failed to fetch SnapTrade accounts." };
   }
 }
 
+// ==================== POSITIONS FUNCTIONS ====================
 
-export async function getSnapTradePositions(snaptradeUserId: string, userSecret: string, accountId?: string) {
+export async function getSnapTradePositions(
+  snaptradeUserId: string, 
+  userSecret: string, 
+  accountId?: string
+) {
   try {
     if (accountId) {
-      // Fetch positions for a single account
-      const positionsResponse = await snaptrade.accountInformation.getUserAccountPositions({ // Corrected
+      const positionsResponse = await snaptrade.accountInformation.getUserAccountPositions({
         userId: snaptradeUserId,
         userSecret: userSecret,
         accountId: accountId,
       });
-      // Check for error response from SDK function
-      if ((positionsResponse.data as any)?.error) {
-         return { error: (positionsResponse.data as any).error };
-      }
       return positionsResponse.data;
     } else {
-      // Fetch positions for all accounts and aggregate
+      // Get all accounts and aggregate positions
       const accountsResponse = await snaptrade.accountInformation.listUserAccounts({
         userId: snaptradeUserId,
         userSecret: userSecret,
       });
-       // Check for error response from SDK function
-      if ((accountsResponse.data as any)?.error) {
-         return { error: (accountsResponse.data as any).error };
-      }
-      const allAccounts = accountsResponse.data;
+      
       let allPositions: any[] = [];
-
-      for (const account of allAccounts) {
+      for (const account of accountsResponse.data) {
         const positionsResponse = await snaptrade.accountInformation.getUserAccountPositions({
           userId: snaptradeUserId,
           userSecret: userSecret,
           accountId: account.id,
         });
-         // Only add data if it exists and is not an error
-        if (positionsResponse.data && !(positionsResponse.data as any)?.error) {
+        if (positionsResponse.data) {
           allPositions = allPositions.concat(positionsResponse.data);
         }
       }
       return allPositions;
     }
   } catch (error) {
-    console.error(`Error fetching SnapTrade positions${accountId ? ` for account ${accountId}` : ''}:`, error);
-     // Return a consistent error structure
-    return { error: `Failed to fetch SnapTrade positions${accountId ? ` for account ${accountId}` : ''}.` };
+    console.error('Error fetching positions:', error);
+    return { error: 'Failed to fetch positions.' };
   }
 }
 
-export async function getSnapTradeBalances(snaptradeUserId: string, userSecret: string, accountId?: string) {
+// ==================== BALANCES FUNCTIONS ====================
+
+export async function getSnapTradeBalances(
+  snaptradeUserId: string, 
+  userSecret: string, 
+  accountId?: string
+): Promise<Balance[] | { error: string }> {
   try {
     if (accountId) {
-      // Fetch balances for a single account
-      const balancesResponse = await snaptrade.accountInformation.getUserAccountBalance({ // New function for balances
+      const balancesResponse = await snaptrade.accountInformation.getUserAccountBalance({
         userId: snaptradeUserId,
         userSecret: userSecret,
         accountId: accountId,
       });
-      // Check for error response from SDK function
-      if ((balancesResponse.data as any)?.error) {
-         return { error: (balancesResponse.data as any).error };
-      }
       return balancesResponse.data;
     } else {
-      // Fetch balances for all accounts and aggregate
+      // Get all accounts and aggregate balances
       const accountsResponse = await snaptrade.accountInformation.listUserAccounts({
         userId: snaptradeUserId,
         userSecret: userSecret,
       });
-       // Check for error response from SDK function
-      if ((accountsResponse.data as any)?.error) {
-         return { error: (accountsResponse.data as any).error };
-      }
-      const allAccounts = accountsResponse.data;
-      let allBalances: Balance[] = []; // Use Balance[] type
-
-      for (const account of allAccounts) {
+      
+      let allBalances: Balance[] = [];
+      for (const account of accountsResponse.data) {
         const balancesResponse = await snaptrade.accountInformation.getUserAccountBalance({
           userId: snaptradeUserId,
           userSecret: userSecret,
           accountId: account.id,
         });
-         // Only add data if it exists and is not an error, and is an array
-        if (balancesResponse.data && !(balancesResponse.data as any)?.error && Array.isArray(balancesResponse.data)) {
+        if (balancesResponse.data && Array.isArray(balancesResponse.data)) {
           allBalances = allBalances.concat(balancesResponse.data);
         }
       }
+      
       // Aggregate balances by currency
       const aggregatedBalances: { [key: string]: { cash: number, buying_power: number } } = {};
       for (const balance of allBalances) {
-        // Check if currency and code are defined before accessing
         if (balance.currency?.code) {
-           const currencyCode = balance.currency.code;
-            if (!aggregatedBalances[currencyCode]) {
-              aggregatedBalances[currencyCode] = { cash: 0, buying_power: 0 };
-            }
-            aggregatedBalances[currencyCode].cash += balance.cash || 0; // Handle potential null/undefined cash
-            aggregatedBalances[currencyCode].buying_power += balance.buying_power || 0; // Handle potential null/undefined buying_power
+          const currencyCode = balance.currency.code;
+          if (!aggregatedBalances[currencyCode]) {
+            aggregatedBalances[currencyCode] = { cash: 0, buying_power: 0 };
+          }
+          aggregatedBalances[currencyCode].cash += balance.cash || 0;
+          aggregatedBalances[currencyCode].buying_power += balance.buying_power || 0;
         }
       }
+      
       return Object.keys(aggregatedBalances).map(currencyCode => ({
-        currency: { code: currencyCode, name: currencyCode }, // You might want to store currency names
+        currency: { code: currencyCode, name: currencyCode, id: currencyCode },
         cash: aggregatedBalances[currencyCode].cash,
         buying_power: aggregatedBalances[currencyCode].buying_power,
       }));
     }
   } catch (error) {
-    console.error(`Error fetching SnapTrade balances${accountId ? ` for account ${accountId}` : ''}:`, error);
-    // Return a consistent error structure
-    return { error: `Failed to fetch SnapTrade balances${accountId ? ` for account ${accountId}` : ''}.` };
+    console.error('Error fetching balances:', error);
+    return { error: 'Failed to fetch balances.' };
   }
 }
 
-// Add new functions to get aggregated open equities, open options, and cash
-export async function getOpenEquities(snaptradeUserId: string, userSecret: string, accountId?: string) {
-  try {
-    const allPositions = await getSnapTradePositions(snaptradeUserId, userSecret, accountId);
-    // Check if allPositions is an array before filtering
-    if (!Array.isArray(allPositions) || (allPositions as any).error) {
-      return allPositions; // Return error or non-array result
-    }
-    // Filter for equity positions (assuming type 'cs' is common stock/equity)
-    const equityPositions = allPositions.filter(
-      (position: any) => ['cs', 'et'].includes(position.symbol?.symbol?.type?.code)
-    );
-    // You might want to aggregate the value of equity positions here if needed
-    return equityPositions.length; // Returning count for now
-  } catch (error) {
-    console.error(`Error fetching open equities${accountId ? ` for account ${accountId}` : ''}:`, error);
-     // Return a consistent error structure
-    return { error: `Failed to fetch open equities${accountId ? ` for account ${accountId}` : ''}.` };
-  }
-}
+// ==================== HOLDINGS FUNCTIONS ====================
 
-export async function getOpenOptions(snaptradeUserId: string, userSecret: string, accountId?: string) {
+export async function getUserHoldings(
+  snaptradeUserId: string,
+  userSecret: string,
+  accountId?: string
+) {
   try {
-     if (accountId) {
-      // Fetch holdings for a single account to get option positions
+    if (accountId) {
       const holdingsResponse = await snaptrade.accountInformation.getUserHoldings({
-         userId: snaptradeUserId,
-         userSecret: userSecret,
-         accountId: accountId,
+        userId: snaptradeUserId,
+        userSecret: userSecret,
+        accountId: accountId,
       });
-      // Check for error response from SDK function
-      if ((holdingsResponse.data as any)?.error) {
-         return { error: (holdingsResponse.data as any).error };
-      }
-      return holdingsResponse.data?.option_positions?.length || 0; // Return count of option positions
+      return holdingsResponse.data;
     } else {
-       // Fetch holdings for all accounts and aggregate option positions
+      // Get holdings for all accounts
       const accountsResponse = await snaptrade.accountInformation.listUserAccounts({
         userId: snaptradeUserId,
         userSecret: userSecret,
       });
-       // Check for error response from SDK function
-      if ((accountsResponse.data as any)?.error) {
-         return { error: (accountsResponse.data as any).error };
-      }
-      const allAccounts = accountsResponse.data;
-      let allOptionPositions = 0;
 
-      for (const account of allAccounts) {
-         const holdingsResponse = await snaptrade.accountInformation.getUserHoldings({
-            userId: snaptradeUserId,
-            userSecret: userSecret,
-            accountId: account.id,
-         });
-          // Only add data if it exists and is not an error
-         if (holdingsResponse.data && !(holdingsResponse.data as any)?.error) {
-            allOptionPositions += holdingsResponse.data.option_positions?.length || 0; // Handle potential null/undefined option_positions
-         }
-      }
-      return allOptionPositions;
-    }
-  } catch (error) {
-    console.error(`Error fetching open options${accountId ? ` for account ${accountId}` : ''}:`, error);
-     // Return a consistent error structure
-    return { error: `Failed to fetch open options${accountId ? ` for account ${accountId}` : ''}.` };
-  }
-}
+      // Aggregate holdings from all accounts
+      const allHoldings = {
+        account: null,
+        balances: [] as any[],
+        positions: [] as any[],
+        option_positions: [] as any[],
+        orders: [] as any[],
+        total_value: { value: 0, currency: 'USD' }
+      };
 
-export async function getCash(snaptradeUserId: string, userSecret: string, accountId?: string) {
-  try {
-    const allBalances = await getSnapTradeBalances(snaptradeUserId, userSecret, accountId);
-     // Check if allBalances is an array before proceeding
-     if (!Array.isArray(allBalances) || (allBalances as any).error) {
-        return allBalances; // Return error or non-array result
-     }
+      let totalValue = 0;
 
-    // Aggregate cash from all currencies
-    let totalCash = 0;
-    for (const balance of allBalances) {
-       totalCash += balance.cash || 0; // Handle potential null/undefined cash
-    }
+      for (const account of accountsResponse.data) {
+        const holdingsResponse = await snaptrade.accountInformation.getUserHoldings({
+          userId: snaptradeUserId,
+          userSecret: userSecret,
+          accountId: account.id,
+        });
 
-    return totalCash;
-  } catch (error) {
-    console.error(`Error fetching cash${accountId ? ` for account ${accountId}` : ''}:`, error);
-     // Return a consistent error structure
-    return { error: `Failed to fetch cash${accountId ? ` for account ${accountId}` : ''}.` };
-  }
-}
-
-
-// Add a function to get all positions (equities and options)
-export async function getAllPositions(snaptradeUserId: string, userSecret: string, accountId?: string) {
-    try {
-        if (accountId) {
-             const holdingsResponse = await snaptrade.accountInformation.getUserHoldings({
-                userId: snaptradeUserId,
-                userSecret: userSecret,
-                accountId: accountId,
-             });
-              // Check for error response from SDK function
-             if ((holdingsResponse.data as any)?.error) {
-                return { error: (holdingsResponse.data as any).error };
-             }
-             // Combine equity and option positions, handling potential null/undefined
-             return (holdingsResponse.data?.positions || []).concat(holdingsResponse.data?.option_positions || []);
-
-        } else {
-            const accountsResponse = await snaptrade.accountInformation.listUserAccounts({
-                userId: snaptradeUserId,
-                userSecret: userSecret,
-            });
-             // Check for error response from SDK function
-            if ((accountsResponse.data as any)?.error) {
-                return { error: (accountsResponse.data as any).error };
-            }
-            const allAccounts = accountsResponse.data;
-            let allPositions: any[] = [];
-
-            for (const account of allAccounts) {
-                const holdingsResponse = await snaptrade.accountInformation.getUserHoldings({
-                    userId: snaptradeUserId,
-                    userSecret: userSecret,
-                    accountId: account.id,
-                });
-                 // Only add data if it exists and is not an error
-                 if (holdingsResponse.data && !(holdingsResponse.data as any)?.error) {
-                    allPositions = allPositions.concat(holdingsResponse.data.positions || []).concat(holdingsResponse.data.option_positions || []); // Handle potential null/undefined positions/option_positions
-                }
-            }
-            return allPositions;
+        if (holdingsResponse.data) {
+          const holdings = holdingsResponse.data;
+          allHoldings.balances = allHoldings.balances.concat(holdings.balances || []);
+          allHoldings.positions = allHoldings.positions.concat(holdings.positions || []);
+          allHoldings.option_positions = allHoldings.option_positions.concat(holdings.option_positions || []);
+          allHoldings.orders = allHoldings.orders.concat(holdings.orders || []);
+          totalValue += holdings.total_value?.value || 0;
         }
-    } catch (error) {
-        console.error(`Error fetching all positions${accountId ? ` for account ${accountId}` : ''}:`, error);
-         // Return a consistent error structure
-        return { error: `Failed to fetch all positions${accountId ? ` for account ${accountId}` : ''}.` };
+      }
+
+      allHoldings.total_value.value = totalValue;
+      return allHoldings;
     }
+  } catch (error) {
+    console.error('Error fetching holdings:', error);
+    return { error: 'Failed to fetch holdings.' };
+  }
 }
 
-export async function getOtherPositions(snaptradeUserId: string, userSecret: string, accountId?: string) {
-  try {
-    const allPositions = await getSnapTradePositions(snaptradeUserId, userSecret, accountId);
+// ==================== AGGREGATED DATA FUNCTIONS ====================
 
-    if (!Array.isArray(allPositions) || (allPositions as any).error) {
-      return allPositions; // Return error or non-array result
+export async function getAllPositions(
+  snaptradeUserId: string, 
+  userSecret: string, 
+  accountId?: string
+) {
+  try {
+    const holdings = await getUserHoldings(snaptradeUserId, userSecret, accountId);
+    
+    if ('error' in holdings) {
+      return holdings;
     }
 
-    // Filter out 'cs' (common stock) and 'et' (ETF) positions
-    const otherPositions = allPositions.filter(
-      (position: any) => !['cs', 'et'].includes(position.symbol?.symbol?.type?.code)
-    );
-
-    return otherPositions.length; // Return count of other positions
+    // Combine equity and option positions
+    return (holdings.positions || []).concat(holdings.option_positions || []);
   } catch (error) {
-    console.error(`Error fetching other positions${accountId ? ` for account ${accountId}` : ''}:`, error);
-    return { error: `Failed to fetch other positions${accountId ? ` for account ${accountId}` : ''}.` };
+    console.error('Error fetching all positions:', error);
+    return { error: 'Failed to fetch all positions.' };
   }
 }

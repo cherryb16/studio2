@@ -1,7 +1,12 @@
 // src/app/actions/snaptrade-enhanced.ts
 'use server';
 
-import { snaptrade } from './snaptrade'; // Import your existing snaptrade instance
+import { 
+  snaptrade,
+  getUserHoldings,
+  getSnapTradeAccounts,
+  getSnapTradeCredentials 
+} from './snaptrade';
 import { 
   generatePortfolioSummary,
   calculateTotalBalance,
@@ -12,96 +17,62 @@ import {
   getTopPositions
 } from './portfolio-analytics';
 
-// ==================== ENHANCED SNAPTRADE FUNCTIONS ====================
+// Re-export the base function to avoid duplication
+export { 
+  getSnapTradeCredentials,
+  getSnapTradeAccounts,
+  getSnapTradeBalances,
+  getSnapTradePositions,
+  getAllPositions,
+  getUserHoldings
+} from './snaptrade';
 
-/**
- * Get comprehensive portfolio analytics for a user
- */
+// ==================== PORTFOLIO ANALYTICS ====================
+
+// Helper function to ensure holdings data has the expected structure
+function normalizeHoldingsData(holdings: any): any {
+  return {
+    account: holdings.account || null,
+    balances: holdings.balances || [],
+    positions: holdings.positions || [],
+    option_positions: holdings.option_positions || [],
+    orders: holdings.orders || [],
+    total_value: holdings.total_value || { value: 0, currency: 'USD' }
+  };
+}
+
 export async function getPortfolioAnalytics(
   snaptradeUserId: string, 
   userSecret: string, 
   accountId?: string
 ) {
   try {
-    if (accountId) {
-      // Get analytics for a specific account
-      const holdingsResponse = await snaptrade.accountInformation.getUserHoldings({
-        userId: snaptradeUserId,
-        userSecret: userSecret,
-        accountId: accountId,
-      });
-
-      if ((holdingsResponse.data as any)?.error) {
-        return { error: (holdingsResponse.data as any).error };
-      }
-
-      return generatePortfolioSummary(holdingsResponse.data);
-    } else {
-      // Get analytics for all accounts combined
-      const accountsResponse = await snaptrade.accountInformation.listUserAccounts({
-        userId: snaptradeUserId,
-        userSecret: userSecret,
-      });
-
-      if ((accountsResponse.data as any)?.error) {
-        return { error: (accountsResponse.data as any).error };
-      }
-
-      // Aggregate holdings from all accounts
-      const allHoldings = {
-        account: null,
-        balances: [] as any[],
-        positions: [] as any[],
-        option_positions: [] as any[],
-        orders: [] as any[],
-        total_value: { value: 0, currency: 'USD' }
-      };
-
-      let totalValue = 0;
-
-      for (const account of accountsResponse.data) {
-        const holdingsResponse = await snaptrade.accountInformation.getUserHoldings({
-          userId: snaptradeUserId,
-          userSecret: userSecret,
-          accountId: account.id,
-        });
-
-        if (holdingsResponse.data && !(holdingsResponse.data as any)?.error) {
-          const holdings = holdingsResponse.data;
-          
-          allHoldings.balances = allHoldings.balances.concat(holdings.balances || []);
-          allHoldings.positions = allHoldings.positions.concat(holdings.positions || []);
-          allHoldings.option_positions = allHoldings.option_positions.concat(holdings.option_positions || []);
-          allHoldings.orders = allHoldings.orders.concat(holdings.orders || []);
-          
-          totalValue += holdings.total_value?.value || 0;
-        }
-      }
-
-      allHoldings.total_value.value = totalValue;
-      return generatePortfolioSummary(allHoldings);
+    const holdings = await getUserHoldings(snaptradeUserId, userSecret, accountId);
+    
+    if ('error' in holdings) {
+      return holdings;
     }
+
+    // Normalize the holdings data to ensure all properties exist
+    const normalizedHoldings = normalizeHoldingsData(holdings);
+    return generatePortfolioSummary(normalizedHoldings);
   } catch (error) {
-    console.error(`Error getting portfolio analytics${accountId ? ` for account ${accountId}` : ''}:`, error);
-    return { error: `Failed to get portfolio analytics${accountId ? ` for account ${accountId}` : ''}.` };
+    console.error('Error getting portfolio analytics:', error);
+    return { error: 'Failed to get portfolio analytics.' };
   }
 }
 
-/**
- * Get simplified portfolio overview (faster, less detailed)
- */
+// ==================== PORTFOLIO OVERVIEW ====================
+
 export async function getPortfolioOverview(
   snaptradeUserId: string, 
   userSecret: string
 ) {
   try {
-    const accountsResponse = await snaptrade.accountInformation.listUserAccounts({
-      userId: snaptradeUserId,
-      userSecret: userSecret,
-    });
+    const accountsResponse = await getSnapTradeAccounts(snaptradeUserId, userSecret);
 
-    if ((accountsResponse.data as any)?.error) {
-      return { error: (accountsResponse.data as any).error };
+    if ('error' in accountsResponse) {
+      return accountsResponse;
     }
 
     let totalBalance = 0;
@@ -111,21 +82,16 @@ export async function getPortfolioOverview(
     let totalUnrealizedPnL = 0;
     const accountSummaries = [];
 
-    for (const account of accountsResponse.data) {
-      const holdingsResponse = await snaptrade.accountInformation.getUserHoldings({
-        userId: snaptradeUserId,
-        userSecret: userSecret,
-        accountId: account.id,
-      });
+    for (const account of accountsResponse) {
+      const holdings = await getUserHoldings(snaptradeUserId, userSecret, account.id);
 
-      if (holdingsResponse.data && !(holdingsResponse.data as any)?.error) {
-        const holdings = holdingsResponse.data;
-        
-        const accountBalance = calculateTotalBalance(holdings);
-        const accountCash = calculateCashBalance(holdings);
-        const accountEquities = calculateEquitiesBalance(holdings);
-        const accountOptions = calculateOptionsBalance(holdings);
-        const accountPnL = calculateTotalUnrealizedPnL(holdings);
+      if (!('error' in holdings)) {
+        const normalizedHoldings = normalizeHoldingsData(holdings);
+        const accountBalance = calculateTotalBalance(normalizedHoldings);
+        const accountCash = calculateCashBalance(normalizedHoldings);
+        const accountEquities = calculateEquitiesBalance(normalizedHoldings);
+        const accountOptions = calculateOptionsBalance(normalizedHoldings);
+        const accountPnL = calculateTotalUnrealizedPnL(normalizedHoldings);
 
         totalBalance += accountBalance;
         totalCash += accountCash;
@@ -152,7 +118,7 @@ export async function getPortfolioOverview(
       totalOptions,
       totalUnrealizedPnL,
       totalUnrealizedPnLPercentage: totalBalance > 0 ? (totalUnrealizedPnL / (totalBalance - totalUnrealizedPnL)) * 100 : 0,
-      accountCount: accountsResponse.data.length,
+      accountCount: accountsResponse.length,
       accounts: accountSummaries
     };
   } catch (error) {
@@ -161,35 +127,27 @@ export async function getPortfolioOverview(
   }
 }
 
-/**
- * Get account comparison data
- */
+// ==================== ACCOUNT COMPARISON ====================
+
 export async function getAccountComparison(
   snaptradeUserId: string, 
   userSecret: string
 ) {
   try {
-    const accountsResponse = await snaptrade.accountInformation.listUserAccounts({
-      userId: snaptradeUserId,
-      userSecret: userSecret,
-    });
+    const accountsResponse = await getSnapTradeAccounts(snaptradeUserId, userSecret);
 
-    if ((accountsResponse.data as any)?.error) {
-      return { error: (accountsResponse.data as any).error };
+    if ('error' in accountsResponse) {
+      return accountsResponse;
     }
 
     const accountComparisons = [];
 
-    for (const account of accountsResponse.data) {
-      const holdingsResponse = await snaptrade.accountInformation.getUserHoldings({
-        userId: snaptradeUserId,
-        userSecret: userSecret,
-        accountId: account.id,
-      });
+    for (const account of accountsResponse) {
+      const holdings = await getUserHoldings(snaptradeUserId, userSecret, account.id);
 
-      if (holdingsResponse.data && !(holdingsResponse.data as any)?.error) {
-        const holdings = holdingsResponse.data;
-        const analytics = generatePortfolioSummary(holdings);
+      if (!('error' in holdings)) {
+        const normalizedHoldings = normalizeHoldingsData(holdings);
+        const analytics = generatePortfolioSummary(normalizedHoldings);
 
         accountComparisons.push({
           accountId: account.id,
@@ -214,9 +172,8 @@ export async function getAccountComparison(
   }
 }
 
-/**
- * Get watchlist candidates based on current holdings
- */
+// ==================== WATCHLIST SUGGESTIONS ====================
+
 export async function getWatchlistCandidates(
   snaptradeUserId: string, 
   userSecret: string,
@@ -225,16 +182,14 @@ export async function getWatchlistCandidates(
   try {
     const analytics = await getPortfolioAnalytics(snaptradeUserId, userSecret);
     
-    if ((analytics as any).error) {
+    if ('error' in analytics) {
       return analytics;
     }
 
-    // Get sectors/industries from current top positions
     const topPositions = getTopPositions(analytics as any, 20);
     const sectors = new Set();
     
     // This would typically require additional market data API
-    // For now, return structure for watchlist candidates
     return {
       suggestedSymbols: [],
       basedOnSectors: Array.from(sectors),
@@ -246,28 +201,24 @@ export async function getWatchlistCandidates(
   }
 }
 
-/**
- * Calculate portfolio performance metrics over time
- * Note: This would require historical data from SnapTrade or external source
- */
+// ==================== PERFORMANCE METRICS ====================
+
 export async function getPerformanceMetrics(
   snaptradeUserId: string, 
   userSecret: string,
   timeframe: 'day' | 'week' | 'month' | 'quarter' | 'year' = 'month'
 ) {
   try {
-    // This would typically require historical portfolio values
-    // For now, return current snapshot with placeholder for historical data
     const currentAnalytics = await getPortfolioAnalytics(snaptradeUserId, userSecret);
     
-    if ((currentAnalytics as any).error) {
+    if ('error' in currentAnalytics) {
       return currentAnalytics;
     }
 
+    // This would typically require historical data
     return {
       currentValue: (currentAnalytics as any).totalBalance,
       timeframe,
-      // These would be calculated from historical data:
       totalReturn: 0, // Placeholder
       totalReturnPercentage: 0, // Placeholder
       volatility: 0, // Placeholder
@@ -275,7 +226,6 @@ export async function getPerformanceMetrics(
       maxDrawdown: 0, // Placeholder
       bestDay: { date: null, return: 0 },
       worstDay: { date: null, return: 0 },
-      // Current unrealized PnL as proxy for recent performance
       unrealizedPnL: (currentAnalytics as any).unrealizedPnL.total,
       unrealizedPnLPercentage: (currentAnalytics as any).unrealizedPnL.totalPercentage
     };
@@ -285,9 +235,8 @@ export async function getPerformanceMetrics(
   }
 }
 
-/**
- * Get portfolio rebalancing suggestions
- */
+// ==================== REBALANCING SUGGESTIONS ====================
+
 export async function getRebalancingSuggestions(
   snaptradeUserId: string, 
   userSecret: string,
@@ -296,7 +245,7 @@ export async function getRebalancingSuggestions(
   try {
     const analytics = await getPortfolioAnalytics(snaptradeUserId, userSecret);
     
-    if ((analytics as any).error) {
+    if ('error' in analytics) {
       return analytics;
     }
 
@@ -316,7 +265,7 @@ export async function getRebalancingSuggestions(
       const currentPercent = currentComposition[assetClass] || 0;
       const difference = targetPercent - currentPercent;
       
-      if (Math.abs(difference) > 5) { // Only suggest if >5% difference
+      if (Math.abs(difference) > 5) {
         suggestions.push({
           assetClass,
           currentPercent: Math.round(currentPercent * 100) / 100,
