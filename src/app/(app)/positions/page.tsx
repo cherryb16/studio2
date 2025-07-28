@@ -1,27 +1,28 @@
 'use client';
 
 import { useSnapTradePositions } from '../../../hooks/useSnapTrade';
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useRef, useCallback } from 'react';
+import { useDrag, useDrop, DndProvider } from 'react-dnd';
+import { HTML5Backend } from 'react-dnd-html5-backend';
+import type { DropTargetMonitor, DragSourceMonitor } from 'react-dnd';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Input } from '@/components/ui/input';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Label } from '@/components/ui/label';
 
 interface Position {
     symbol: {
-        symbol?: string; // Assuming equity symbol is directly here
+        symbol?: string;
         option_symbol?: {
-            underlying_symbol?: { symbol?: string }; // Use underlying_symbol.symbol for ticker
+            underlying_symbol?: { symbol?: string };
             option_type?: string;
             strike_price?: number;
-            expiration_date?: string; // Added expiration_date
-            // ... other option_symbol properties
+            expiration_date?: string;
         };
         id?: string;
         description?: string;
         local_id?: string;
-        security_type?: any; // You might want to define a proper interface for security_type
+        security_type?: any;
     } | null | undefined;
     price: number | null | undefined;
     market_value: number | null | undefined;
@@ -33,16 +34,41 @@ interface Position {
 }
 
 const PositionsPage = () => {
+    // All hooks declared unconditionally and in the same order
     const { data: positions, isLoading, error } = useSnapTradePositions();
-    const [filter, setFilter] = useState('');
-    const [sortBy, setSortBy] = useState<'symbol' | 'price' | 'market_value' | 'units' | 'average_purchase_price' | 'realized_pnl' | 'open_pnl'>('symbol');
-    const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
-    const [grouping, setGrouping] = useState<'none' | 'type'>('none');
-
-    // Defensive: always treat positions as array
     const safePositions: Position[] = Array.isArray(positions) ? positions : [];
+    const [filter, setFilter] = useState('');
+    // Dynamic column management state and toggles (unconditionally declared)
+    // Dropdown visibility states
+    const [showOptionDropdown, setShowOptionDropdown] = useState(false);
+    const [showEquityDropdown, setShowEquityDropdown] = useState(false);
+    const [visibleEquityColumns, setVisibleEquityColumns] = useState<
+      (
+        'Symbol' |
+        'Price' |
+        'Value' |
+        'Quantity' |
+        'Purchase Price' |
+        'Unrealized P/L'
+      )[]
+    >([
+      'Symbol', 'Price', 'Value', 'Quantity', 'Purchase Price', 'Unrealized P/L',
+    ]);
 
-    const filteredAndSortedPositions = useMemo(() => {
+    const [visibleOptionColumns, setVisibleOptionColumns] = useState<
+      (
+        'Underlying' |
+        'Strike' |
+        'Type' |
+        'Expiration' |
+        'Quantity' |
+        'Market Value' |
+        'Unrealized P/L'
+      )[]
+    >([
+      'Underlying', 'Strike', 'Type', 'Expiration', 'Quantity', 'Market Value', 'Unrealized P/L',
+    ]);
+    const { equities, options } = useMemo(() => {
         let filtered = safePositions;
         if (filter) {
             filtered = filtered.filter(position => {
@@ -53,155 +79,338 @@ const PositionsPage = () => {
                 return equitySymbol?.includes(filter.toLowerCase()) || optionString.includes(filter.toLowerCase());
             });
         }
-
-        filtered.sort((a, b) => {
-            const aValue = a && sortBy in a ? a[sortBy as keyof Position] : undefined;
-            const bValue = b && sortBy in b ? b[sortBy as keyof Position] : undefined;
-            if (aValue === undefined || aValue === null) return sortDirection === 'asc' ? 1 : -1;
-            if (bValue === undefined || bValue === null) return sortDirection === 'asc' ? -1 : 1;
-            if (aValue < bValue) return sortDirection === 'asc' ? -1 : 1;
-            if (aValue > bValue) return sortDirection === 'asc' ? 1 : -1;
-            return 0;
-        });
-
-        if (grouping === 'type') {
-            const equities = filtered.filter(position => position?.symbol?.symbol);
-            const options = filtered.filter(position => position?.symbol?.option_symbol);
-            return { equities, options };
-        }
-
-        return filtered;
-    }, [safePositions, filter, sortBy, sortDirection, grouping]);
+        const equities = filtered.filter(position => position?.symbol?.symbol);
+        const options = filtered.filter(position => position?.symbol?.option_symbol);
+        return { equities, options };
+    }, [safePositions, filter]);
 
     if (isLoading) return <div>Loading...</div>;
     if (error) return <p>Error loading positions: {error.message}</p>;
-    if (!Array.isArray(positions) && grouping === 'none') return <p>Unexpected data format.</p>;
+    if (!Array.isArray(positions)) return <p>Unexpected data format.</p>;
 
-    const renderTable = (data: Position[] | undefined) => {
+    const toggleEquityColumn = (col: typeof visibleEquityColumns[number]) => {
+      setVisibleEquityColumns(prev =>
+        prev.includes(col)
+          ? prev.filter(c => c !== col)
+          : [...prev, col as typeof visibleEquityColumns[number]]
+      );
+    };
+
+    const toggleOptionColumn = (col: typeof visibleOptionColumns[number]) => {
+      setVisibleOptionColumns(prev =>
+        prev.includes(col)
+          ? prev.filter(c => c !== col)
+          : [...prev, col as typeof visibleOptionColumns[number]]
+      );
+    };
+
+    // Table for equities
+    const renderEquitiesTable = (data: Position[] | undefined) => {
         if (!data || !Array.isArray(data) || data.length === 0) {
-            return <p>No positions available.</p>;
+            return <p>No equities available.</p>;
         }
         return (
             <Table>
                 <TableHeader>
                     <TableRow>
-                        <TableHead onClick={() => setSortBy('symbol')}>Symbol</TableHead>
-                        <TableHead onClick={() => setSortBy('price')}>Price</TableHead>
-                        <TableHead onClick={() => setSortBy('market_value')}>Value</TableHead>
-                        <TableHead onClick={() => setSortBy('units')}>Quantity</TableHead>
-                        <TableHead onClick={() => setSortBy('average_purchase_price')}>Purchase Price</TableHead>
-                        <TableHead onClick={() => setSortBy('realized_pnl')}>Realized P/L</TableHead>
-                        <TableHead onClick={() => setSortBy('open_pnl')}>Unrealized P/L</TableHead>
-                        <TableHead>Expiration Date</TableHead>
+                        {visibleEquityColumns.includes('Symbol') && <TableHead>Symbol</TableHead>}
+                        {visibleEquityColumns.includes('Price') && <TableHead>Price</TableHead>}
+                        {visibleEquityColumns.includes('Value') && <TableHead>Value</TableHead>}
+                        {visibleEquityColumns.includes('Quantity') && <TableHead>Quantity</TableHead>}
+                        {visibleEquityColumns.includes('Purchase Price') && <TableHead>Purchase Price</TableHead>}
+                        {visibleEquityColumns.includes('Unrealized P/L') && <TableHead>Unrealized P/L</TableHead>}
                     </TableRow>
                 </TableHeader>
                 <TableBody>
                     {data.map((position, index) => {
-                        console.log(`Rendering position at index ${index}:`, position);
-                        if (!position) {
-                            return null;
-                        }
-    
-                        // Determine the symbol to display, handling various cases
-                        let symbolToDisplay = '-';
-                        let expirationDateToDisplay = '-'; // Variable to hold expiration date
-                        if (position.symbol) {
-                             // Use underlying_symbol.symbol and include expiration_date for options
-                             if (position.symbol.option_symbol?.underlying_symbol) { // Check if underlying_symbol exists
-                                 const option = position.symbol.option_symbol;
-                                const underlyingSymbol = option.underlying_symbol?.symbol || '-';
-                                symbolToDisplay = `${underlyingSymbol} $${option.strike_price || '-'} ${option.option_type || '-'}`;                                 expirationDateToDisplay = option.expiration_date || '-'; // Get expiration date
-                             } else if (position.symbol.symbol) { // Check for equity symbol here
-                                 symbolToDisplay = position.symbol.symbol;
-                             } else if (position.symbol.description) { // Fallback to description
-                                 symbolToDisplay = position.symbol.description;
-                             } else if (position.symbol.local_id) { // Fallback to local_id
-                                 symbolToDisplay = position.symbol.local_id;
-                             }
-                         }
-    
+                        if (!position) return null;
+                        let rawSymbol: unknown = position.symbol?.symbol;
+                        let symbolToDisplay =
+                          typeof rawSymbol === 'string'
+                            ? rawSymbol
+                            : rawSymbol && typeof rawSymbol === 'object' && 'symbol' in rawSymbol && typeof rawSymbol.symbol === 'string'
+                            ? rawSymbol.symbol
+                            : position.symbol?.description || position.symbol?.local_id || '-';
                         return (
                             <TableRow key={index}>
-                                {/* Explicitly convert to string */}
-                                <TableCell>{String(symbolToDisplay)}</TableCell>
-                                <TableCell>{String(position.price?.toFixed(2) || '-')}</TableCell>
-                                <TableCell>{String(position.market_value?.toFixed(2) || '-')}</TableCell>
-                                <TableCell>{String(position.units || '-')}</TableCell>
-                                <TableCell>{String(position.average_purchase_price?.toFixed(2) || '-')}</TableCell>
-                                <TableCell>{String(position.realized_pnl?.toFixed(2) || '-')}</TableCell>
-                                <TableCell>{String(position.open_pnl?.toFixed(2) || '-')}</TableCell>
-                                <TableCell>{String(expirationDateToDisplay)}</TableCell>
+                                {visibleEquityColumns.includes('Symbol') && (
+                                  <TableCell>{String(symbolToDisplay)}</TableCell>
+                                )}
+                                {visibleEquityColumns.includes('Price') && (
+                                  <TableCell>{typeof position.price === 'number' ? position.price.toFixed(2) : '-'}</TableCell>
+                                )}
+                                {visibleEquityColumns.includes('Value') && (
+                                  <TableCell>{typeof position.market_value === 'number' ? position.market_value.toFixed(2) : '-'}</TableCell>
+                                )}
+                                {visibleEquityColumns.includes('Quantity') && (
+                                  <TableCell>{String(position.units || '-')}</TableCell>
+                                )}
+                                {visibleEquityColumns.includes('Purchase Price') && (
+                                  <TableCell>{typeof position.average_purchase_price === 'number' ? position.average_purchase_price.toFixed(2) : '-'}</TableCell>
+                                )}
+                                {visibleEquityColumns.includes('Unrealized P/L') && (
+                                  <TableCell>{typeof position.open_pnl === 'number' ? position.open_pnl.toFixed(2) : '-'}</TableCell>
+                                )}
                             </TableRow>
                         );
                     })}
                 </TableBody>
-                </Table>
+            </Table>
         );
-    };   
+    };
+
+    // Table for options
+    const renderOptionsTable = (data: Position[] | undefined) => {
+        if (!data || !Array.isArray(data) || data.length === 0) {
+            return <p>No options available.</p>;
+        }
+        return (
+            <Table>
+                <TableHeader>
+                    <TableRow>
+                        {visibleOptionColumns.includes('Underlying') && <TableHead>Underlying</TableHead>}
+                        {visibleOptionColumns.includes('Strike') && <TableHead>Strike</TableHead>}
+                        {visibleOptionColumns.includes('Type') && <TableHead>Type</TableHead>}
+                        {visibleOptionColumns.includes('Expiration') && <TableHead>Expiration</TableHead>}
+                        {visibleOptionColumns.includes('Quantity') && <TableHead>Quantity</TableHead>}
+                        {visibleOptionColumns.includes('Market Value') && <TableHead>Market Value</TableHead>}
+                        {visibleOptionColumns.includes('Unrealized P/L') && <TableHead>Unrealized P/L</TableHead>}
+                    </TableRow>
+                </TableHeader>
+                <TableBody>
+                    {data.map((position, index) => {
+                        if (!position) return null;
+                        const option = position.symbol?.option_symbol;
+                        const underlying = option?.underlying_symbol?.symbol || '-';
+                        const strike = option?.strike_price !== undefined ? option.strike_price : '-';
+                        const type = option?.option_type || '-';
+                        const expiration = option?.expiration_date || '-';
+                        return (
+                            <TableRow key={index}>
+                                {visibleOptionColumns.includes('Underlying') && (
+                                  <TableCell>{String(underlying)}</TableCell>
+                                )}
+                                {visibleOptionColumns.includes('Strike') && (
+                                  <TableCell>{String(strike)}</TableCell>
+                                )}
+                                {visibleOptionColumns.includes('Type') && (
+                                  <TableCell>{String(type)}</TableCell>
+                                )}
+                                {visibleOptionColumns.includes('Expiration') && (
+                                  <TableCell>{String(expiration)}</TableCell>
+                                )}
+                                {visibleOptionColumns.includes('Quantity') && (
+                                  <TableCell>{String(position.units || '-')}</TableCell>
+                                )}
+                                {visibleOptionColumns.includes('Market Value') && (
+                                  <TableCell>{typeof position.market_value === 'number' ? position.market_value.toFixed(2) : '-'}</TableCell>
+                                )}
+                                {visibleOptionColumns.includes('Unrealized P/L') && (
+                                  <TableCell>{typeof position.open_pnl === 'number' ? position.open_pnl.toFixed(2) : '-'}</TableCell>
+                                )}
+                            </TableRow>
+                        );
+                    })}
+                </TableBody>
+            </Table>
+        );
+    };
+
+    // Drag and drop logic for equity columns
+    type EquityCol =
+      | 'Symbol'
+      | 'Price'
+      | 'Value'
+      | 'Quantity'
+      | 'Purchase Price'
+      | 'Unrealized P/L';
+
+    const equityColDefs: EquityCol[] = [
+      'Symbol', 'Price', 'Value', 'Quantity', 'Purchase Price', 'Unrealized P/L'
+    ];
+
+    // DnD item type
+    const DND_TYPE = 'equity-col';
+
+    interface DragItem {
+      index: number;
+      col: EquityCol;
+      type: string;
+    }
+
+    // Draggable label for equity column
+    const DraggableEquityCol = ({
+      col,
+      index,
+      moveCol,
+      checked,
+      onToggle,
+    }: {
+      col: EquityCol;
+      index: number;
+      moveCol: (from: number, to: number) => void;
+      checked: boolean;
+      onToggle: () => void;
+    }) => {
+      const ref = useRef<HTMLLabelElement>(null);
+      const [, drop] = useDrop<DragItem, unknown, unknown>({
+        accept: DND_TYPE,
+        hover(item: DragItem, monitor: DropTargetMonitor) {
+          if (!ref.current) return;
+          const dragIndex = item.index;
+          const hoverIndex = index;
+          if (dragIndex === hoverIndex) return;
+          moveCol(dragIndex, hoverIndex);
+          item.index = hoverIndex;
+        },
+      });
+      const [{ isDragging }, drag] = useDrag<DragItem, unknown, { isDragging: boolean }>({
+        type: DND_TYPE,
+        item: { index, col, type: DND_TYPE },
+        collect: (monitor: DragSourceMonitor) => ({
+          isDragging: monitor.isDragging(),
+        }),
+      });
+      drag(drop(ref));
+      return (
+        <label
+          ref={ref}
+          className={`flex items-center gap-1 text-sm cursor-move px-1 py-0.5 rounded ${isDragging ? 'opacity-50 bg-gray-200 dark:bg-zinc-700' : ''}`}
+        >
+          <input
+            type="checkbox"
+            checked={checked}
+            onChange={onToggle}
+          />
+          {col}
+        </label>
+      );
+    };
+
+    // Move column in visibleEquityColumns
+    const moveEquityCol = useCallback((from: number, to: number) => {
+      setVisibleEquityColumns(prev => {
+        const next = [...prev];
+        const [removed] = next.splice(from, 1);
+        next.splice(to, 0, removed);
+        return next;
+      });
+    }, []);
 
     return (
-        <div className="container mx-auto py-10">
-            <h1 className="text-3xl font-bold mb-6">Positions</h1>
-            <div className="flex gap-4 mb-6">
-                <div className="flex-1">
-                    <Label htmlFor="filter">Filter by Symbol</Label>
-                    <Input
-                        id="filter"
-                        type="text"
-                        placeholder="Enter symbol..."
-                        value={filter}
-                        onChange={(e: React.ChangeEvent<HTMLInputElement>) => setFilter(e.target.value)}
-                    />
-                </div>
-                <div>
-                    <Label htmlFor="grouping">Group By</Label>
-                    <Select value={grouping} onValueChange={(value: "none" | "type") => setGrouping(value)}>
-                        <SelectTrigger className="w-[180px]">
-                            <SelectValue placeholder="Group By" />
-                        </SelectTrigger>
-                        <SelectContent>
-                            <SelectItem value="none">None</SelectItem>
-                            <SelectItem value="type">Type (Equity/Option)</SelectItem>
-                        </SelectContent>
-                    </Select>
-                </div>
-                <div>
-                    <Label htmlFor="sortDirection">Sort Direction</Label>
-                    <Select value={sortDirection} onValueChange={(value: "asc" | "desc") => setSortDirection(value)}>
-                        <SelectTrigger className="w-[180px]">
-                            <SelectValue placeholder="Sort Direction" />
-                        </SelectTrigger>
-                        <SelectContent>
-                            <SelectItem value="asc">Ascending</SelectItem>
-                            <SelectItem value="desc">Descending</SelectItem>
-                        </SelectContent>
-                    </Select>
-                </div>
+      <DndProvider backend={HTML5Backend}>
+        <div className="w-full mx-auto py-10">
+          <h1 className="text-3xl font-bold mb-6">Positions</h1>
+          <div className="flex gap-4 mb-6">
+            <div className="flex-1">
+              <Label htmlFor="filter">Filter by Symbol</Label>
+              <Input
+                id="filter"
+                type="text"
+                placeholder="Enter symbol..."
+                value={filter}
+                onChange={(e: React.ChangeEvent<HTMLInputElement>) => setFilter(e.target.value)}
+              />
             </div>
-            {grouping === 'type' ? (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    <Card>
-                        <CardHeader><CardTitle>Equities</CardTitle></CardHeader>
-                        <CardContent>
-                            {renderTable((filteredAndSortedPositions as { equities: Position[], options: Position[] }).equities)}
-                        </CardContent>
-                    </Card>
-                    <Card>
-                        <CardHeader><CardTitle>Options</CardTitle></CardHeader>
-                        <CardContent>
-                             {renderTable((filteredAndSortedPositions as { equities: Position[], options: Position[] }).options)}
-                        </CardContent>
-                    </Card>
+          </div>
+          <div className="flex flex-col gap-6 w-full">
+            <details className="bg-white dark:bg-zinc-900 rounded-md shadow-md border">
+              <summary className="cursor-pointer px-6 py-4 text-lg font-semibold border-b dark:border-zinc-700">
+                Options (Total: ${
+                  options.reduce((sum, p) => sum + (typeof p.market_value === 'number' ? p.market_value : 0), 0)
+                    .toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+                })
+              </summary>
+              <div className="p-4 overflow-x-auto">
+                {/* Option column dropdown */}
+                <div className="flex justify-end mb-4 relative">
+                  <button
+                    onClick={() => setShowOptionDropdown(prev => !prev)}
+                    className="text-xl"
+                    aria-label="Toggle columns"
+                    type="button"
+                  >
+                    {/* Three-bar icon */}
+                    <svg width="24" height="24" fill="none" viewBox="0 0 24 24">
+                      <rect x="4" y="7" width="16" height="2" rx="1" fill="currentColor" />
+                      <rect x="4" y="11" width="16" height="2" rx="1" fill="currentColor" />
+                      <rect x="4" y="15" width="16" height="2" rx="1" fill="currentColor" />
+                    </svg>
+                  </button>
+                  {showOptionDropdown && (
+                    <div className="absolute top-full right-0 bg-white dark:bg-zinc-800 p-2 border rounded shadow-md z-10">
+                      {(['Underlying', 'Strike', 'Type', 'Expiration', 'Quantity', 'Market Value', 'Unrealized P/L'] as const).map(col => (
+                        <label key={col} className="flex items-center gap-1 text-sm">
+                          <input
+                            type="checkbox"
+                            checked={visibleOptionColumns.includes(col)}
+                            onChange={() => toggleOptionColumn(col)}
+                          />
+                          {col}
+                        </label>
+                      ))}
+                    </div>
+                  )}
                 </div>
-            ) : (
-                <Card>
-                    <CardHeader><CardTitle>All Positions</CardTitle></CardHeader>
-                    <CardContent>
-                        {renderTable(filteredAndSortedPositions as Position[])}
-                    </CardContent>
-                </Card>
-            )}
+                {renderOptionsTable(options)}
+              </div>
+            </details>
+            {/* Equity three-bar button outside details summary */}
+            <div className="flex justify-end mb-2 relative">
+              <button
+                onClick={() => setShowEquityDropdown(prev => !prev)}
+                className="text-xl"
+                aria-label="Toggle columns"
+                type="button"
+              >
+                {/* Three-bar icon */}
+                <svg width="24" height="24" fill="none" viewBox="0 0 24 24">
+                  <rect x="4" y="7" width="16" height="2" rx="1" fill="currentColor" />
+                  <rect x="4" y="11" width="16" height="2" rx="1" fill="currentColor" />
+                  <rect x="4" y="15" width="16" height="2" rx="1" fill="currentColor" />
+                </svg>
+              </button>
+              {showEquityDropdown && (
+                <div className="absolute top-full right-0 bg-white dark:bg-zinc-800 p-2 border rounded shadow-md z-10 min-w-[180px]">
+                  {visibleEquityColumns.map((col, idx) => (
+                    <DraggableEquityCol
+                      key={col}
+                      col={col}
+                      index={idx}
+                      moveCol={moveEquityCol}
+                      checked={visibleEquityColumns.includes(col)}
+                      onToggle={() => toggleEquityColumn(col)}
+                    />
+                  ))}
+                  {/* Show all remaining columns not in visibleEquityColumns as unchecked */}
+                  {equityColDefs.filter(col => !visibleEquityColumns.includes(col)).map((col, idx) => (
+                    <DraggableEquityCol
+                      key={col}
+                      col={col}
+                      index={visibleEquityColumns.length + idx}
+                      moveCol={() => {}}
+                      checked={false}
+                      onToggle={() => toggleEquityColumn(col)}
+                    />
+                  ))}
+                  <div className="text-xs text-gray-400 mt-1">Drag to reorder columns</div>
+                </div>
+              )}
+            </div>
+            <details className="bg-white dark:bg-zinc-900 rounded-md shadow-md border">
+              <summary className="cursor-pointer px-6 py-4 text-lg font-semibold border-b dark:border-zinc-700">
+                Equities (Total: ${
+                  equities.reduce((sum, p) => sum + (typeof p.market_value === 'number' ? p.market_value : 0), 0)
+                    .toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+                })
+              </summary>
+              <div className="p-4 overflow-x-auto">
+                {renderEquitiesTable(equities)}
+              </div>
+            </details>
+          </div>
         </div>
+      </DndProvider>
     );
 };
 
