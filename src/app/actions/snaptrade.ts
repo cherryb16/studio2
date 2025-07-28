@@ -1,6 +1,5 @@
 // src/app/actions/snaptrade.ts
 'use server';
-import { db } from '@/lib/firebase-admin';
 import { Snaptrade } from "snaptrade-typescript-sdk";
 import { UserIDandSecret, Balance, Account } from "snaptrade-typescript-sdk";
 
@@ -103,19 +102,11 @@ export async function getSnapTradeLoginUrl(firebaseUserId: string) {
 
 export async function getSnapTradeCredentials(firebaseUserId: string) {
   try {
-    const userDoc = await db.collection('snaptrade_users').doc(firebaseUserId).get();
-
-    if (userDoc.exists) {
-      const data = userDoc.data();
-      const snaptradeUserId = data?.snaptradeUserID;
-      const userSecret = data?.snaptradeUserSecret;
-
-      if (snaptradeUserId && userSecret) {
-        return {
-          snaptradeUserId,
-          userSecret,
-        };
-      }
+    const res = await fetch(`/api/firebase/getCredentials?firebaseUserId=${firebaseUserId}`, { cache: 'no-store' });
+    if (!res.ok) return null;
+    const data = await res.json();
+    if (data.snaptradeUserId && data.userSecret) {
+      return { snaptradeUserId: data.snaptradeUserId, userSecret: data.userSecret };
     }
     return null;
   } catch (error) {
@@ -126,12 +117,19 @@ export async function getSnapTradeCredentials(firebaseUserId: string) {
 
 async function saveSnapTradeCredentials(firebaseUserId: string, credentials: UserIDandSecret) {
   try {
-    await db.collection('snaptrade_users').doc(firebaseUserId).set({
-      snaptradeUserID: credentials.userId,
-      snaptradeUserSecret: credentials.userSecret,
-      snaptradeRegisteredAt: new Date().toISOString(),
-    }, { merge: true });
-    console.log('SnapTrade credentials stored in Firestore.');
+    await fetch('/api/firebase/updateSomething', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        firebaseUserId,
+        data: {
+          snaptradeUserID: credentials.userId,
+          snaptradeUserSecret: credentials.userSecret,
+          snaptradeRegisteredAt: new Date().toISOString(),
+        },
+      }),
+    });
+    console.log('SnapTrade credentials stored via API.');
   } catch (error) {
     console.error('Failed to store SnapTrade credentials:', error);
   }
