@@ -15,19 +15,7 @@ import { UserIcon, LogOut } from 'lucide-react';
 import Link from 'next/link';
 import { auth } from '@/lib/firebase';
 import { signOut } from 'firebase/auth';
-
-const getInitials = (nameOrEmail?: string | null): string => {
-  if (!nameOrEmail) return "";
-
-  const parts = nameOrEmail.split('@')[0].split(' ');
-  let initials = "";
-  for (const part of parts) {
-    if (part.length > 0) {
-      initials += part[0];
-    }
-  }
-  return initials.toUpperCase();
-};
+import { getInitials } from '@/lib/utils';
 
 
 interface UserNavProps {
