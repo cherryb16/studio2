@@ -91,6 +91,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setUser(currentUser);
       setLoading(false);
 
+      // Ensure pathname is not null before proceeding
+      if (pathname === null) {
+        console.log("Pathname is null, waiting for it to be available.");
+        return; // Exit the effect until pathname is available
+      }
+
       if (currentUser) {
         console.log("User is authenticated. Current path:", pathname);
         const isOnAuthPage = pathname === '/login' || pathname === '/signup' || pathname === '/';
@@ -102,8 +108,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
       } else {
         console.log("User is NOT authenticated. Current path:", pathname);
-        const isOnProtectedPage = pathname.startsWith('/dashboard') || 
-                                pathname.startsWith('/trades') || 
+        const isOnProtectedPage = pathname.startsWith('/dashboard') ||
+                                pathname.startsWith('/trades') ||
                                 pathname.startsWith('/journal');
         if (isOnProtectedPage) {
           console.log(`User on protected page (${pathname}), redirecting to /login`);
@@ -115,16 +121,5 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     });
 
     return () => unsubscribe();
-  }, [router, pathname]);
-
-  const value = {
-    user,
-    loading,
-    signIn,
-    googleSignIn,
-    signUp,
-    logOut,
-  };
-
-  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+  }, [router, pathname]); // Include pathname in the dependency array
 }
