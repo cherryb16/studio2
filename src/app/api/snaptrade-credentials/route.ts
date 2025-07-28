@@ -1,5 +1,5 @@
 // src/app/api/snaptrade-credentials/route.ts
-import { getSnapTradeCredentials } from '@/app/actions/snaptrade';
+import { getSnapTradeCredentials } from '@/app/actions/snaptrade-enhanced';
 import { NextResponse } from 'next/server';
 
 export async function GET(request: Request) {

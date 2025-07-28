@@ -23,7 +23,7 @@ import { useAuth } from '@/hooks/use-auth';
 import { Account, Balance, Position, AccountUniversalActivity } from "snaptrade-typescript-sdk";
 
 // Import action functions
-import { getSnapTradeAccounts, getSnapTradeBalances, getAllPositions, getSnapTradePositions } from '@/app/actions/snaptrade'; // Assuming these are the correct action names
+import { getSnapTradeAccounts, getSnapTradeBalances, getAllPositions, getSnapTradePositions } from '@/app/actions/snaptrade-enhanced'; // Assuming these are the correct action names
 
 
 // Define a union type for action return types to include potential errors
