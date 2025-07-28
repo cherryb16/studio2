@@ -6,15 +6,16 @@ export function cn(...inputs: ClassValue[]) {
 }
 
 export function getInitials(nameOrEmail: string | null | undefined): string {
-  if (!nameOrEmail) {
-    return '';
+  if (!nameOrEmail) return ''
+
+  const parts = nameOrEmail.split('@')[0].split(' ')
+  let initials = ''
+
+  for (const part of parts) {
+    if (part.length > 0) {
+      initials += part[0]
+    }
   }
 
-  const words = nameOrEmail.split(' ');
-  const initials = words
-    .map((word) => word.charAt(0))
-    .join('')
-    .toUpperCase();
-
-  return initials;
+  return initials.toUpperCase()
 }
