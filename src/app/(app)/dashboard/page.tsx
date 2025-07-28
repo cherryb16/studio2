@@ -58,21 +58,26 @@ const DashboardPage = () => {
     // Fetch accounts (always fetch all to populate the dropdown)
     const { data: accounts, isLoading: accountsLoading, error: accountsError } = useQuery<ActionReturnType<Account[]>>({
         queryKey: ['snaptradeAccounts', snaptradeUserId, userSecret],
-        queryFn: () => getSnapTradeAccounts(firebaseUserId!, snaptradeUserId!, userSecret!),
+        queryFn: () => getSnapTradeAccounts(snaptradeUserId!, userSecret!),
         enabled: credentialsAvailable, // Only fetch when credentials are available
     });
 
      // Fetch balances based on selected account (this is for balances per currency)
     const { data: balances, isLoading: balancesLoading, error: balancesError } = useQuery<ActionReturnType<Balance[]>>({
         queryKey: ['snaptradeBalances', snaptradeUserId, userSecret, selectedAccount],
-        queryFn: () => getSnapTradeBalances(snaptradeUserId!, userSecret!, selectedAccount),
+        queryFn: () => getSnapTradeBalances(snaptradeUserId!, userSecret!),
         enabled: credentialsAvailable, // Only fetch when credentials are available
     });
 
      // Fetch positions based on selected account
      const { data: allPositions, isLoading: positionsLoading, error: positionsError } = useQuery<ActionReturnType<Position[]>>({
         queryKey: ['snaptradePositions', snaptradeUserId, userSecret, selectedAccount],
-        queryFn: () => getAllPositions(snaptradeUserId!, userSecret!, selectedAccount),
+        queryFn: async (): Promise<ActionReturnType<Position[]>> => {
+            const result = await getAllPositions(snaptradeUserId!, userSecret!);
+            if (Array.isArray(result)) return result;
+            if (result && typeof result === "object" && "error" in result) return result as { error: string };
+            return { error: "Unexpected response format from getAllPositions" };
+        },
         enabled: credentialsAvailable, // Only fetch when credentials are available
     });
 
@@ -94,7 +99,7 @@ const DashboardPage = () => {
      // Safely access data and handle potential error objects
     const accountData = accounts && !('error' in accounts) ? accounts : [];
     const balanceData = balances && !('error' in balances) ? balances : [];
-    const positionData = allPositions && !('error' in allPositions) ? allPositions : [];
+    const positionData: Position[] = Array.isArray(allPositions) ? allPositions : [];
     const activityData = activities && !('error' in activities) ? activities : [];
 
     // Calculate total balance based on selected account
@@ -103,14 +108,14 @@ const DashboardPage = () => {
         : Array.isArray(accountData) ? accountData.reduce((sum, account) => sum + (account.balance?.total?.amount || 0), 0) : 0;
 
     // Filter and calculate total market value for equities
-    const openEquities = Array.isArray(positionData) ? positionData.filter(position => position.symbol?.symbol?.type?.code === 'cs' && position.units !== 0) : [];
+    const openEquities: Position[] = Array.isArray(positionData) ? positionData.filter(position => position.symbol?.symbol?.type?.code === 'cs' && position.units !== 0) : [];
     const totalEquitiesValue = Array.isArray(openEquities) ? openEquities.reduce((sum, position) => {
         console.log("Processing Equity Position for Market Value:", position, "Current Sum:", sum);
         return sum + ((position.price || 0) * (position.units || 0)); // Calculate using price * units
     }, 0) : 0;
 
     // Filter and calculate total market value for options
-    const openOptions = Array.isArray(positionData) ? positionData.filter(position => position.symbol?.option_symbol && position.units !== 0) : [];
+    const openOptions: Position[] = Array.isArray(positionData) ? positionData.filter(position => position.symbol?.option_symbol && position.units !== 0) : [];
     const totalOptionsValue = Array.isArray(openOptions) ? openOptions.reduce((sum, position) => {
          console.log("Processing Option Position for Market Value:", position, "Current Sum:", sum);
         return sum + ((position.price || 0) * (position.units || 0) * 100); // Calculate using price * units * 100
@@ -160,6 +165,7 @@ const DashboardPage = () => {
                     <h2 className="text-3xl font-bold tracking-tight">Dashboard</h2>
                     <div className="flex items-center space-x-2">
                         <select
+                            title="Select Account"
                             value={selectedAccount || 'all'}
                             onChange={(e) => setSelectedAccount(e.target.value === 'all' ? undefined : e.target.value)}
                             className="p-2 border rounded-md"
