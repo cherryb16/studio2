@@ -41,7 +41,7 @@ const DashboardPage = () => {
         queryKey: ['snaptradeCredentials', firebaseUserId],
         queryFn: async () => {
             if (!firebaseUserId) return Promise.reject('Firebase User ID not available');
-            const response = await fetch(`/api/snaptrade-credentials?firebaseUserId=${firebaseUserId}`);
+            const response = await fetch(`/api/firebase/getCredentials?firebaseUserId=${firebaseUserId}`);
             if (!response.ok) {
                 throw new Error('Failed to fetch SnapTrade credentials');
             }

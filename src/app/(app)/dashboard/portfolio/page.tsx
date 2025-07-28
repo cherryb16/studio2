@@ -2,7 +2,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import useAuth from '@/hooks/useAuth';
+import { useAuth } from '@/hooks/use-auth';
 import { 
   getDashboardSummary,
   getPortfolioAnalytics,
@@ -12,7 +12,6 @@ import {
   checkPortfolioAlerts,
   compareWithBenchmarks
 } from '@/app/actions/portfolio-utilities';
-import { getSnapTradeCredentials } from '@/app/actions/snaptrade';
 
 // ==================== MAIN PORTFOLIO DASHBOARD COMPONENT ====================
 
@@ -35,7 +34,8 @@ export default function PortfolioDashboard() {
       setError(null);
 
       // Get SnapTrade credentials
-      const credentials = await getSnapTradeCredentials(user.uid);
+      const credRes = await fetch(`/api/firebase/getCredentials?firebaseUserId=${user.uid}`);
+      const credentials = credRes.ok ? await credRes.json() : null;
       if (!credentials) {
         setError('SnapTrade credentials not found. Please connect your account.');
         return;
@@ -63,7 +63,8 @@ export default function PortfolioDashboard() {
 
   const handleExportData = async (format: 'json' | 'csv') => {
     try {
-      const credentials = await getSnapTradeCredentials(user.uid);
+      const credRes = await fetch(`/api/firebase/getCredentials?firebaseUserId=${user.uid}`);
+      const credentials = credRes.ok ? await credRes.json() : null;
       if (!credentials) return;
 
       const exportData = await exportPortfolioData(
@@ -306,7 +307,8 @@ function AnalyticsTab({ userId }: { userId: string }) {
 
   const loadAnalytics = async () => {
     try {
-      const credentials = await getSnapTradeCredentials(userId);
+      const credRes = await fetch(`/api/firebase/getCredentials?firebaseUserId=${userId}`);
+      const credentials = credRes.ok ? await credRes.json() : null;
       if (!credentials) return;
 
       const analytics = await getPortfolioAnalytics(
@@ -452,7 +454,8 @@ function RiskManagementTab({ userId }: { userId: string }) {
 
   const loadRiskData = async () => {
     try {
-      const credentials = await getSnapTradeCredentials(userId);
+      const credRes = await fetch(`/api/firebase/getCredentials?firebaseUserId=${userId}`);
+      const credentials = credRes.ok ? await credRes.json() : null;
       if (!credentials) return;
 
       const riskDashboard = await generateRiskDashboard(
@@ -625,7 +628,8 @@ function AlertsTab({ userId }: { userId: string }) {
 
   const loadAlerts = async () => {
     try {
-      const credentials = await getSnapTradeCredentials(userId);
+      const credRes = await fetch(`/api/firebase/getCredentials?firebaseUserId=${userId}`);
+      const credentials = credRes.ok ? await credRes.json() : null;
       if (!credentials) return;
 
       const alertData = await checkPortfolioAlerts(
