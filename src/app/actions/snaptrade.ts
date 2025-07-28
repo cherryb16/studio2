@@ -1,13 +1,7 @@
 // src/app/actions/snaptrade.ts
 'use server';
-import { Snaptrade } from "snaptrade-typescript-sdk";
 import { UserIDandSecret, Balance, Account } from "snaptrade-typescript-sdk";
-
-// Initialize Snaptrade
-export const snaptrade = new Snaptrade({
-  clientId: process.env.SNAPTRADE_CLIENT_ID || '',
-  consumerKey: process.env.SNAPTRADE_SECRET || '',
-});
+import { snaptrade } from './snaptrade-client';
 
 // ==================== AUTHENTICATION & USER MANAGEMENT ====================
 
