@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { auth } from '@/lib/firebase'; // Import Firebase auth
 import { User } from 'firebase/auth'; // Import User type
-import { getAllPositions } from '@/app/actions/snaptrade-enhanced';
+import { getAllPositions } from '@/app/actions/snaptrade';
 
 export const useSnapTradePositions = () => {
   const [data, setData] = useState<any[] | null>(null);

@@ -39,31 +39,26 @@ const PositionsPage = () => {
     const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
     const [grouping, setGrouping] = useState<'none' | 'type'>('none');
 
+    // Defensive: always treat positions as array
+    const safePositions: Position[] = Array.isArray(positions) ? positions : [];
 
     const filteredAndSortedPositions = useMemo(() => {
-        let filtered = positions || [];
+        let filtered = safePositions;
         if (filter) {
             filtered = filtered.filter(position => {
                 const equitySymbol = position?.symbol?.symbol?.toLowerCase();
                 const optionSymbol = position?.symbol?.option_symbol;
-                // Use underlying_symbol.symbol for filtering options and include expiration_date
                 const optionString = optionSymbol?.underlying_symbol?.symbol ?
                     `${optionSymbol.underlying_symbol.symbol} ${optionSymbol.strike_price || ''} ${optionSymbol.option_type || ''} ${optionSymbol.expiration_date || ''}`.toLowerCase() : '';
-
                 return equitySymbol?.includes(filter.toLowerCase()) || optionString.includes(filter.toLowerCase());
             });
         }
 
         filtered.sort((a, b) => {
-             // Added checks for null/undefined before accessing properties
             const aValue = a && sortBy in a ? a[sortBy as keyof Position] : undefined;
             const bValue = b && sortBy in b ? b[sortBy as keyof Position] : undefined;
-
-
             if (aValue === undefined || aValue === null) return sortDirection === 'asc' ? 1 : -1;
             if (bValue === undefined || bValue === null) return sortDirection === 'asc' ? -1 : 1;
-
-
             if (aValue < bValue) return sortDirection === 'asc' ? -1 : 1;
             if (aValue > bValue) return sortDirection === 'asc' ? 1 : -1;
             return 0;
@@ -76,13 +71,14 @@ const PositionsPage = () => {
         }
 
         return filtered;
-    }, [positions, filter, sortBy, sortDirection, grouping]);
+    }, [safePositions, filter, sortBy, sortDirection, grouping]);
 
     if (isLoading) return <div>Loading...</div>;
     if (error) return <p>Error loading positions: {error.message}</p>;
+    if (!Array.isArray(positions) && grouping === 'none') return <p>Unexpected data format.</p>;
 
     const renderTable = (data: Position[] | undefined) => {
-        if (!data || data.length === 0) {
+        if (!data || !Array.isArray(data) || data.length === 0) {
             return <p>No positions available.</p>;
         }
         return (
@@ -96,7 +92,7 @@ const PositionsPage = () => {
                         <TableHead onClick={() => setSortBy('average_purchase_price')}>Purchase Price</TableHead>
                         <TableHead onClick={() => setSortBy('realized_pnl')}>Realized P/L</TableHead>
                         <TableHead onClick={() => setSortBy('open_pnl')}>Unrealized P/L</TableHead>
-                        <TableHead>Expiration Date</TableHead> {/* New header for expiration date */}
+                        <TableHead>Expiration Date</TableHead>
                     </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -113,8 +109,8 @@ const PositionsPage = () => {
                              // Use underlying_symbol.symbol and include expiration_date for options
                              if (position.symbol.option_symbol?.underlying_symbol) { // Check if underlying_symbol exists
                                  const option = position.symbol.option_symbol;
-                                 symbolToDisplay = `${option.underlying_symbol.symbol || '-'} $${option.strike_price || '-'} ${option.option_type || '-'}`; // Updated format
-                                 expirationDateToDisplay = option.expiration_date || '-'; // Get expiration date
+                                const underlyingSymbol = option.underlying_symbol?.symbol || '-';
+                                symbolToDisplay = `${underlyingSymbol} $${option.strike_price || '-'} ${option.option_type || '-'}`;                                 expirationDateToDisplay = option.expiration_date || '-'; // Get expiration date
                              } else if (position.symbol.symbol) { // Check for equity symbol here
                                  symbolToDisplay = position.symbol.symbol;
                              } else if (position.symbol.description) { // Fallback to description
@@ -134,7 +130,7 @@ const PositionsPage = () => {
                                 <TableCell>{String(position.average_purchase_price?.toFixed(2) || '-')}</TableCell>
                                 <TableCell>{String(position.realized_pnl?.toFixed(2) || '-')}</TableCell>
                                 <TableCell>{String(position.open_pnl?.toFixed(2) || '-')}</TableCell>
-                                <TableCell>{String(expirationDateToDisplay)}</TableCell> {/* Display expiration date */}
+                                <TableCell>{String(expirationDateToDisplay)}</TableCell>
                             </TableRow>
                         );
                     })}
