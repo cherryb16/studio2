@@ -1,13 +1,15 @@
-// src/app/actions/snaptrade-enhanced.ts
 'use server';
 
-import { 
-  snaptrade,
-  getUserHoldings,
+import { snaptrade } from './snaptrade-client';
+import {
+  getSnapTradeCredentials,
   getSnapTradeAccounts,
-  getSnapTradeCredentials 
+  getSnapTradeBalances,
+  getSnapTradePositions,
+  getAllPositions,
+  getUserHoldings
 } from './snaptrade';
-import { 
+import {
   generatePortfolioSummary,
   calculateTotalBalance,
   calculateEquitiesBalance,
@@ -17,88 +19,63 @@ import {
   getTopPositions
 } from './portfolio-analytics';
 
-// Re-export the base function to avoid duplication
-export { 
-  getSnapTradeCredentials,
-  getSnapTradeAccounts,
-  getSnapTradeBalances,
-  getSnapTradePositions,
-  getAllPositions,
-  getUserHoldings
-} from './snaptrade';
-
-// ==================== PORTFOLIO ANALYTICS ====================
-
-// Helper function to ensure holdings data has the expected structure
-function normalizeHoldingsData(holdings: any): any {
+// Helper to ensure account property is present
+function normalizeHoldingsData(holdings: any, accountId?: string): any {
   return {
-    account: holdings.account || null,
-    balances: holdings.balances || [],
-    positions: holdings.positions || [],
-    option_positions: holdings.option_positions || [],
-    orders: holdings.orders || [],
-    total_value: holdings.total_value || { value: 0, currency: 'USD' }
+    ...holdings,
+    account: holdings.account ?? (accountId ? { id: accountId } : {})
   };
 }
 
+// PATCHED USAGES BELOW
+
 export async function getPortfolioAnalytics(
-  snaptradeUserId: string, 
-  userSecret: string, 
+  snaptradeUserId: string,
+  userSecret: string,
   accountId?: string
 ) {
   try {
     const holdings = await getUserHoldings(snaptradeUserId, userSecret, accountId);
-    
     if ('error' in holdings) {
       return holdings;
     }
-
-    // Normalize the holdings data to ensure all properties exist
-    const normalizedHoldings = normalizeHoldingsData(holdings);
-    return generatePortfolioSummary(normalizedHoldings);
+    // PATCH: always pass account property
+    return generatePortfolioSummary(normalizeHoldingsData(holdings, accountId));
   } catch (error) {
     console.error('Error getting portfolio analytics:', error);
     return { error: 'Failed to get portfolio analytics.' };
   }
 }
 
-// ==================== PORTFOLIO OVERVIEW ====================
-
 export async function getPortfolioOverview(
-  snaptradeUserId: string, 
+  snaptradeUserId: string,
   userSecret: string
 ) {
   try {
     const accountsResponse = await getSnapTradeAccounts(snaptradeUserId, userSecret);
-
     if ('error' in accountsResponse) {
       return accountsResponse;
     }
-
     let totalBalance = 0;
     let totalCash = 0;
     let totalEquities = 0;
     let totalOptions = 0;
     let totalUnrealizedPnL = 0;
     const accountSummaries = [];
-
     for (const account of accountsResponse) {
       const holdings = await getUserHoldings(snaptradeUserId, userSecret, account.id);
-
       if (!('error' in holdings)) {
-        const normalizedHoldings = normalizeHoldingsData(holdings);
+        const normalizedHoldings = normalizeHoldingsData(holdings, account.id); // PATCH
         const accountBalance = calculateTotalBalance(normalizedHoldings);
         const accountCash = calculateCashBalance(normalizedHoldings);
         const accountEquities = calculateEquitiesBalance(normalizedHoldings);
         const accountOptions = calculateOptionsBalance(normalizedHoldings);
         const accountPnL = calculateTotalUnrealizedPnL(normalizedHoldings);
-
         totalBalance += accountBalance;
         totalCash += accountCash;
         totalEquities += accountEquities;
         totalOptions += accountOptions;
         totalUnrealizedPnL += accountPnL;
-
         accountSummaries.push({
           accountId: account.id,
           accountName: account.name,
@@ -110,7 +87,6 @@ export async function getPortfolioOverview(
         });
       }
     }
-
     return {
       totalBalance,
       totalCash,
@@ -127,28 +103,21 @@ export async function getPortfolioOverview(
   }
 }
 
-// ==================== ACCOUNT COMPARISON ====================
-
 export async function getAccountComparison(
-  snaptradeUserId: string, 
+  snaptradeUserId: string,
   userSecret: string
 ) {
   try {
     const accountsResponse = await getSnapTradeAccounts(snaptradeUserId, userSecret);
-
     if ('error' in accountsResponse) {
       return accountsResponse;
     }
-
     const accountComparisons = [];
-
     for (const account of accountsResponse) {
       const holdings = await getUserHoldings(snaptradeUserId, userSecret, account.id);
-
       if (!('error' in holdings)) {
-        const normalizedHoldings = normalizeHoldingsData(holdings);
+        const normalizedHoldings = normalizeHoldingsData(holdings, account.id); // PATCH
         const analytics = generatePortfolioSummary(normalizedHoldings);
-
         accountComparisons.push({
           accountId: account.id,
           accountName: account.name,
@@ -164,7 +133,6 @@ export async function getAccountComparison(
         });
       }
     }
-
     return accountComparisons;
   } catch (error) {
     console.error('Error getting account comparison:', error);
