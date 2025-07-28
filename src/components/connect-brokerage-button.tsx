@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
-import { getSnapTradeLoginUrl } from "@/app/actions/snaptrade"; // Import the server action
+import { getSnapTradeLoginUrl } from "@/app/actions/snaptrade-enhanced"; // Import the server action
 import { Loader2 } from 'lucide-react';
 import { useAuth } from '@/hooks/use-auth'; // Import useAuth
 

@@ -17,7 +17,7 @@ interface LoginRedirectURI {
 }
 
 // Initialize Snaptrade - make sure to use environment variables
-const snaptrade = new Snaptrade({
+export const snaptrade = new Snaptrade({
   clientId: process.env.SNAPTRADE_CLIENT_ID || '',
   consumerKey: process.env.SNAPTRADE_SECRET || '',
 });
@@ -341,7 +341,9 @@ export async function getOpenEquities(snaptradeUserId: string, userSecret: strin
       return allPositions; // Return error or non-array result
     }
     // Filter for equity positions (assuming type 'cs' is common stock/equity)
-    const equityPositions = allPositions.filter((position: any) => position.symbol?.symbol?.type?.code === 'cs');
+    const equityPositions = allPositions.filter(
+      (position: any) => ['cs', 'et'].includes(position.symbol?.symbol?.type?.code)
+    );
     // You might want to aggregate the value of equity positions here if needed
     return equityPositions.length; // Returning count for now
   } catch (error) {
@@ -467,4 +469,24 @@ export async function getAllPositions(snaptradeUserId: string, userSecret: strin
          // Return a consistent error structure
         return { error: `Failed to fetch all positions${accountId ? ` for account ${accountId}` : ''}.` };
     }
+}
+
+export async function getOtherPositions(snaptradeUserId: string, userSecret: string, accountId?: string) {
+  try {
+    const allPositions = await getSnapTradePositions(snaptradeUserId, userSecret, accountId);
+
+    if (!Array.isArray(allPositions) || (allPositions as any).error) {
+      return allPositions; // Return error or non-array result
+    }
+
+    // Filter out 'cs' (common stock) and 'et' (ETF) positions
+    const otherPositions = allPositions.filter(
+      (position: any) => !['cs', 'et'].includes(position.symbol?.symbol?.type?.code)
+    );
+
+    return otherPositions.length; // Return count of other positions
+  } catch (error) {
+    console.error(`Error fetching other positions${accountId ? ` for account ${accountId}` : ''}:`, error);
+    return { error: `Failed to fetch other positions${accountId ? ` for account ${accountId}` : ''}.` };
+  }
 }
