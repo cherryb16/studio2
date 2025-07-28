@@ -35,7 +35,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           } : null} />
         </div>
       </header>
-      <div className="container grid flex-1 gap-12 md:grid-cols-[200px_1fr]">
+    <div className="grid flex-1 gap-12 md:grid-cols-[200px_1fr] px-6 md:px-12 w-full">
         <aside className="hidden w-[200px] flex-col md:flex">
           {/* Pass the user object to AppSidebar */}
           <AppSidebar user={user} />
