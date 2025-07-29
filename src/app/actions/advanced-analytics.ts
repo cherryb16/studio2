@@ -16,7 +16,7 @@ interface SectorData {
   }>;
 }
 
-export function analyzeSectorAllocation(holdingsData: any): SectorData[] {
+export async function analyzeSectorAllocation(holdingsData: any): SectorData[] {
   // This would typically require external market data API for sector classification
   // For now, we'll use a basic mapping of common symbols to sectors
   const sectorMap: { [key: string]: string } = {
@@ -64,7 +64,7 @@ export function analyzeSectorAllocation(holdingsData: any): SectorData[] {
 
 // ==================== DIVIDEND ANALYSIS ====================
 
-export function calculateDividendMetrics(holdingsData: any) {
+export async function calculateDividendMetrics(holdingsData: any) {
   // This would require dividend data from external API
   // Placeholder structure for dividend analysis
   const dividendYieldMap: { [key: string]: number } = {
@@ -111,7 +111,7 @@ export function calculateDividendMetrics(holdingsData: any) {
 
 // ==================== TAX OPTIMIZATION ====================
 
-export function analyzeTaxLossHarvesting(holdingsData: any) {
+export async function analyzeTaxLossHarvesting(holdingsData: any) {
   const taxLossOpportunities: any[] = [];
   const taxGainPositions: any[] = [];
   let totalUnrealizedLosses = 0;
@@ -177,7 +177,7 @@ function generateTaxRecommendations(losses: any[], gains: any[]) {
 
 // ==================== POSITION SIZING & RISK MANAGEMENT ====================
 
-export function analyzePositionSizing(holdingsData: any, riskTolerance: 'conservative' | 'moderate' | 'aggressive' = 'moderate') {
+export async function analyzePositionSizing(holdingsData: any, riskTolerance: 'conservative' | 'moderate' | 'aggressive' = 'moderate') {
   const maxPositionLimits = {
     conservative: { single: 5, top5: 20, top10: 35 },
     moderate: { single: 10, top5: 35, top10: 50 },
@@ -268,7 +268,7 @@ function calculateDiversificationScore(holdingsData: any): number {
 
 // ==================== CORRELATION ANALYSIS ====================
 
-export function analyzePortfolioCorrelation(holdingsData: any) {
+export async function analyzePortfolioCorrelation(holdingsData: any) {
   // This would require historical price data for correlation calculations
   // Placeholder structure for correlation analysis
   
@@ -302,7 +302,7 @@ export function analyzePortfolioCorrelation(holdingsData: any) {
 
 // ==================== PERFORMANCE ATTRIBUTION ====================
 
-export function analyzePerformanceAttribution(holdingsData: any) {
+export async function analyzePerformanceAttribution(holdingsData: any) {
   const contributions: any[] = [];
   const totalValue = holdingsData.total_value?.value || 0;
   const totalPnL = holdingsData.positions?.reduce((sum: number, pos: any) => sum + (pos.open_pnl || 0), 0) || 0;
@@ -338,7 +338,7 @@ export function analyzePerformanceAttribution(holdingsData: any) {
 
 // ==================== ESG SCORING ====================
 
-export function analyzeESGExposure(holdingsData: any) {
+export async function analyzeESGExposure(holdingsData: any) {
   // Mock ESG scores (would come from external ESG data provider)
   const esgScores: { [key: string]: { environmental: number; social: number; governance: number; overall: number } } = {
     'AAPL': { environmental: 85, social: 90, governance: 88, overall: 88 },
@@ -424,9 +424,21 @@ export async function generateRiskDashboard(
   riskTolerance: 'conservative' | 'moderate' | 'aggressive' = 'moderate'
 ) {
   try {
+    const accountsResponse = await snaptrade.accountInformation.listUserAccounts({
+      userId: snaptradeUserId,
+      userSecret: userSecret
+    });
+
+    const firstAccountId = accountsResponse.data?.[0]?.id;
+
+    if (!firstAccountId) {
+      return { error: 'No linked accounts found for user.' };
+    }
+
     const holdingsResponse = await snaptrade.accountInformation.getUserHoldings({
       userId: snaptradeUserId,
       userSecret: userSecret,
+      accountId: firstAccountId
     });
 
     if ((holdingsResponse.data as any)?.error) {

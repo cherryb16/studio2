@@ -48,17 +48,17 @@ interface HoldingsData {
 
 // ==================== BALANCE CALCULATIONS ====================
 
-export function calculateTotalBalance(holdingsData: HoldingsData): number {
+export async function calculateTotalBalance(holdingsData: HoldingsData): number {
   return holdingsData.total_value?.value || 0;
 }
 
-export function calculateCashBalance(holdingsData: HoldingsData): number {
+export async function calculateCashBalance(holdingsData: HoldingsData): number {
   return holdingsData.balances?.reduce((total, balance) => {
     return total + (balance.cash || 0);
   }, 0) || 0;
 }
 
-export function calculateBuyingPower(holdingsData: HoldingsData): number {
+export async function calculateBuyingPower(holdingsData: HoldingsData): number {
   return holdingsData.balances?.reduce((total, balance) => {
     return total + (balance.buying_power || 0);
   }, 0) || 0;
@@ -66,7 +66,7 @@ export function calculateBuyingPower(holdingsData: HoldingsData): number {
 
 // ==================== POSITION VALUE CALCULATIONS ====================
 
-export function calculateEquitiesBalance(holdingsData: HoldingsData): number {
+export async function calculateEquitiesBalance(holdingsData: HoldingsData): number {
   const equityTypes = ['cs', 'et']; // Common Stock, ETF
   
   return holdingsData.positions?.reduce((total, position) => {
@@ -78,13 +78,13 @@ export function calculateEquitiesBalance(holdingsData: HoldingsData): number {
   }, 0) || 0;
 }
 
-export function calculateOptionsBalance(holdingsData: HoldingsData): number {
+export async function calculateOptionsBalance(holdingsData: HoldingsData): number {
   return holdingsData.option_positions?.reduce((total, option) => {
     return total + Math.abs((option.units || 0) * (option.price || 0) * 100); // Options are typically in contracts of 100
   }, 0) || 0;
 }
 
-export function calculateCryptoBalance(holdingsData: HoldingsData): number {
+export async function calculateCryptoBalance(holdingsData: HoldingsData): number {
   return holdingsData.positions?.reduce((total, position) => {
     const typeCode = position.symbol?.symbol?.type?.code;
     if (typeCode === 'crypto') {
@@ -94,7 +94,7 @@ export function calculateCryptoBalance(holdingsData: HoldingsData): number {
   }, 0) || 0;
 }
 
-export function calculateOtherAssetsBalance(holdingsData: HoldingsData): number {
+export async function calculateOtherAssetsBalance(holdingsData: HoldingsData): number {
   const knownTypes = ['cs', 'et', 'crypto']; // Common Stock, ETF, Crypto
   
   return holdingsData.positions?.reduce((total, position) => {
@@ -108,7 +108,7 @@ export function calculateOtherAssetsBalance(holdingsData: HoldingsData): number 
 
 // ==================== PnL CALCULATIONS ====================
 
-export function calculateTotalUnrealizedPnL(holdingsData: HoldingsData): number {
+export async function calculateTotalUnrealizedPnL(holdingsData: HoldingsData): number {
   const equityPnL = holdingsData.positions?.reduce((total, position) => {
     return total + (position.open_pnl || 0);
   }, 0) || 0;
@@ -123,7 +123,7 @@ export function calculateTotalUnrealizedPnL(holdingsData: HoldingsData): number 
   return equityPnL + optionsPnL;
 }
 
-export function calculateEquitiesUnrealizedPnL(holdingsData: HoldingsData): number {
+export async function calculateEquitiesUnrealizedPnL(holdingsData: HoldingsData): number {
   const equityTypes = ['cs', 'et'];
   
   return holdingsData.positions?.reduce((total, position) => {
@@ -145,7 +145,7 @@ export function calculateOptionsUnrealizedPnL(holdingsData: HoldingsData): numbe
 
 // ==================== PERCENTAGE CALCULATIONS ====================
 
-export function calculateTotalUnrealizedPnLPercentage(holdingsData: HoldingsData): number {
+export async function calculateTotalUnrealizedPnLPercentage(holdingsData: HoldingsData): number {
   const totalValue = calculateTotalBalance(holdingsData);
   const totalPnL = calculateTotalUnrealizedPnL(holdingsData);
   const costBasis = totalValue - totalPnL;
@@ -153,7 +153,7 @@ export function calculateTotalUnrealizedPnLPercentage(holdingsData: HoldingsData
   return costBasis !== 0 ? (totalPnL / costBasis) * 100 : 0;
 }
 
-export function calculateEquitiesUnrealizedPnLPercentage(holdingsData: HoldingsData): number {
+export async function calculateEquitiesUnrealizedPnLPercentage(holdingsData: HoldingsData): number {
   const equitiesValue = calculateEquitiesBalance(holdingsData);
   const equitiesPnL = calculateEquitiesUnrealizedPnL(holdingsData);
   const costBasis = equitiesValue - equitiesPnL;
@@ -163,7 +163,7 @@ export function calculateEquitiesUnrealizedPnLPercentage(holdingsData: HoldingsD
 
 // ==================== PORTFOLIO COMPOSITION ====================
 
-export function calculatePortfolioComposition(holdingsData: HoldingsData) {
+export async function calculatePortfolioComposition(holdingsData: HoldingsData) {
   const totalValue = calculateTotalBalance(holdingsData);
   
   if (totalValue === 0) {
@@ -187,7 +187,7 @@ export function calculatePortfolioComposition(holdingsData: HoldingsData) {
 
 // ==================== POSITION ANALYTICS ====================
 
-export function getTopPositions(holdingsData: HoldingsData, limit: number = 10) {
+export async function getTopPositions(holdingsData: HoldingsData, limit: number = 10) {
   const allPositions = [
     ...(holdingsData.positions || []).map(pos => ({
       symbol: pos.symbol?.symbol?.symbol || 'Unknown',
@@ -218,7 +218,7 @@ export function getTopPositions(holdingsData: HoldingsData, limit: number = 10) 
     .slice(0, limit);
 }
 
-export function getPositionsByType(holdingsData: HoldingsData) {
+export async function getPositionsByType(holdingsData: HoldingsData) {
   const typeMap: { [key: string]: string } = {
     'cs': 'Common Stock',
     'et': 'ETF',
@@ -254,7 +254,7 @@ export function getPositionsByType(holdingsData: HoldingsData) {
 
 // ==================== RISK METRICS ====================
 
-export function calculatePositionConcentration(holdingsData: HoldingsData) {
+export async function calculatePositionConcentration(holdingsData: HoldingsData) {
   const totalValue = calculateTotalBalance(holdingsData);
   const positions = getTopPositions(holdingsData, 100);
   
@@ -283,7 +283,7 @@ export function calculateDiversificationMetrics(holdingsData: HoldingsData) {
 
 // ==================== OPTIONS ANALYTICS ====================
 
-export function calculateOptionsMetrics(holdingsData: HoldingsData) {
+export async function calculateOptionsMetrics(holdingsData: HoldingsData) {
   if (!holdingsData.option_positions?.length) {
     return {
       totalContracts: 0,
@@ -336,7 +336,7 @@ export function calculateOptionsMetrics(holdingsData: HoldingsData) {
 
 // ==================== COMPREHENSIVE PORTFOLIO SUMMARY ====================
 
-export function generatePortfolioSummary(holdingsData: HoldingsData) {
+export async function generatePortfolioSummary(holdingsData: HoldingsData) {
   return {
     totalBalance: calculateTotalBalance(holdingsData),
     cashBalance: calculateCashBalance(holdingsData),
