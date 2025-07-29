@@ -2,9 +2,7 @@
 
 import { useSnapTradePositions } from '../../../hooks/useSnapTrade';
 import { useState, useMemo, useRef, useCallback } from 'react';
-import { DndProvider } from 'react-dnd/dist/core';
-import { useDrop } from 'react-dnd/dist/hooks/useDrop';
-import { useDrag } from 'react-dnd/dist/hooks/useDrag';
+import { DndProvider, useDrag, useDrop } from 'react-dnd';
 import { HTML5Backend } from 'react-dnd-html5-backend';
 import type { DropTargetMonitor, DragSourceMonitor } from 'react-dnd/dist/types';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
