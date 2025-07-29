@@ -30,6 +30,16 @@ type EquityCol =
   | 'Purchase Price'
   | 'Unrealized P/L';
 
+// Option column types
+type OptionCol =
+  | 'Underlying'
+  | 'Strike'
+  | 'Type'
+  | 'Expiration'
+  | 'Quantity'
+  | 'Market Value'
+  | 'Unrealized P/L';
+
 interface Position {
   symbol: {
     symbol?: string;
@@ -53,8 +63,8 @@ interface Position {
   currency: { code: string; name: string; id: string } | null | undefined;
 }
 
-// Draggable column item component
-const SortableColumnItem = ({
+// Draggable column item component for equity columns
+const SortableEquityColumnItem = ({
   col,
   checked,
   onToggle,
@@ -90,14 +100,56 @@ const SortableColumnItem = ({
           : 'bg-gray-50 dark:bg-zinc-700 border-gray-200 dark:border-zinc-600 hover:bg-gray-100 dark:hover:bg-zinc-600'
       }`}
     >
-      <div className="flex items-center gap-1 text-gray-400">
-        <div className="w-1 h-1 bg-current rounded-full"></div>
-        <div className="w-1 h-1 bg-current rounded-full"></div>
-        <div className="w-1 h-1 bg-current rounded-full"></div>
-        <div className="w-1 h-1 bg-current rounded-full"></div>
-        <div className="w-1 h-1 bg-current rounded-full"></div>
-        <div className="w-1 h-1 bg-current rounded-full"></div>
-      </div>
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={onToggle}
+        onClick={(e) => e.stopPropagation()}
+        className="cursor-pointer"
+        aria-label={`Toggle ${col} column visibility`}
+      />
+      <span className="select-none">{col}</span>
+    </div>
+  );
+};
+
+// Draggable column item component for option columns
+const SortableOptionColumnItem = ({
+  col,
+  checked,
+  onToggle,
+}: {
+  col: OptionCol;
+  checked: boolean;
+  onToggle: () => void;
+}) => {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: col });
+
+  const dragStyle = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    zIndex: isDragging ? 1000 : 'auto',
+  } as React.CSSProperties;
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={dragStyle}
+      {...attributes}
+      {...listeners}
+      className={`flex items-center gap-2 text-sm cursor-move px-3 py-2 rounded transition-all border ${
+        isDragging 
+          ? 'bg-blue-100 dark:bg-blue-900/30 border-blue-300 dark:border-blue-600 opacity-50 z-50' 
+          : 'bg-gray-50 dark:bg-zinc-700 border-gray-200 dark:border-zinc-600 hover:bg-gray-100 dark:hover:bg-zinc-600'
+      }`}
+    >
       <input
         type="checkbox"
         checked={checked}
@@ -120,6 +172,18 @@ const ThreeBarsIcon = () => (
   </svg>
 );
 
+// Arrow icon component
+const ArrowIcon = ({ expanded }: { expanded: boolean }) => (
+  <svg 
+    className={`w-5 h-5 transition-transform duration-200 ${expanded ? 'rotate-90' : ''}`}
+    fill="none" 
+    stroke="currentColor" 
+    viewBox="0 0 24 24"
+  >
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+  </svg>
+);
+
 const PositionsPage = () => {
   // Sensors for drag and drop
   const sensors = useSensors(
@@ -138,6 +202,7 @@ const PositionsPage = () => {
   const safePositions: Position[] = Array.isArray(positions) ? positions : [];
   const [filter, setFilter] = useState('');
   const [activeId, setActiveId] = useState<string | null>(null);
+  const [activeType, setActiveType] = useState<'equity' | 'option' | null>(null);
   
   // Dynamic column management state and toggles
   const [showOptionDropdown, setShowOptionDropdown] = useState(false);
@@ -149,17 +214,7 @@ const PositionsPage = () => {
     'Symbol', 'Price', 'Value', 'Quantity', 'Purchase Price', 'Unrealized P/L',
   ]);
 
-  const [visibleOptionColumns, setVisibleOptionColumns] = useState<
-    (
-      'Underlying' |
-      'Strike' |
-      'Type' |
-      'Expiration' |
-      'Quantity' |
-      'Market Value' |
-      'Unrealized P/L'
-    )[]
-  >([
+  const [visibleOptionColumns, setVisibleOptionColumns] = useState<OptionCol[]>([
     'Underlying', 'Strike', 'Type', 'Expiration', 'Quantity', 'Market Value', 'Unrealized P/L',
   ]);
 
@@ -191,7 +246,7 @@ const PositionsPage = () => {
     );
   };
 
-  const toggleOptionColumn = (col: typeof visibleOptionColumns[number]) => {
+  const toggleOptionColumn = (col: OptionCol) => {
     setVisibleOptionColumns(prev =>
       prev.includes(col)
         ? prev.filter(c => c !== col)
@@ -199,19 +254,41 @@ const PositionsPage = () => {
     );
   };
 
-  // Handle drag events
-  const handleDragStart = (event: any) => {
+  // Handle drag events for equity columns
+  const handleEquityDragStart = (event: any) => {
     setActiveId(event.active.id);
+    setActiveType('equity');
   };
 
-  const handleDragEnd = (event: DragEndEvent) => {
+  const handleEquityDragEnd = (event: DragEndEvent) => {
     const { active, over } = event;
     setActiveId(null);
+    setActiveType(null);
 
     if (active.id !== over?.id) {
       setVisibleEquityColumns((items) => {
         const oldIndex = items.indexOf(active.id as EquityCol);
         const newIndex = items.indexOf(over?.id as EquityCol);
+        return arrayMove(items, oldIndex, newIndex);
+      });
+    }
+  };
+
+  // Handle drag events for option columns
+  const handleOptionDragStart = (event: any) => {
+    setActiveId(event.active.id);
+    setActiveType('option');
+  };
+
+  const handleOptionDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+    setActiveId(null);
+    setActiveType(null);
+
+    if (active.id !== over?.id) {
+      setVisibleOptionColumns((items) => {
+        const oldIndex = items.indexOf(active.id as OptionCol);
+        const newIndex = items.indexOf(over?.id as OptionCol);
         return arrayMove(items, oldIndex, newIndex);
       });
     }
@@ -312,119 +389,168 @@ const PositionsPage = () => {
     );
   };
 
-  // All equity columns
+  // All column types
   const allEquityColumns: EquityCol[] = [
     'Symbol', 'Price', 'Value', 'Quantity', 'Purchase Price', 'Unrealized P/L'
   ];
 
+  const allOptionColumns: OptionCol[] = [
+    'Underlying', 'Strike', 'Type', 'Expiration', 'Quantity', 'Market Value', 'Unrealized P/L'
+  ];
+
   // Get columns not currently visible
   const hiddenEquityColumns = allEquityColumns.filter(col => !visibleEquityColumns.includes(col));
+  const hiddenOptionColumns = allOptionColumns.filter(col => !visibleOptionColumns.includes(col));
 
   return (
-    <DndContext
-      sensors={sensors}
-      collisionDetection={closestCenter}
-      onDragStart={handleDragStart}
-      onDragEnd={handleDragEnd}
-    >
-      <div className="w-full mx-auto py-10 px-4">
-        <h1 className="text-3xl font-bold mb-6">Positions</h1>
-        
-        <div className="flex gap-4 mb-6">
-          <div className="flex-1">
-            <label htmlFor="filter" className="block text-sm font-medium mb-1">Filter by Symbol</label>
-            <input
-              id="filter"
-              type="text"
-              placeholder="Enter symbol..."
-              value={filter}
-              onChange={(e) => setFilter(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 dark:border-zinc-600 rounded-md bg-white dark:bg-zinc-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
-          </div>
+    <div className="w-full mx-auto py-10 px-4">
+      <h1 className="text-3xl font-bold mb-6">Positions</h1>
+      
+      <div className="flex gap-4 mb-6">
+        <div className="flex-1">
+          <label htmlFor="filter" className="block text-sm font-medium mb-1">Filter by Symbol</label>
+          <input
+            id="filter"
+            type="text"
+            placeholder="Enter symbol..."
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+            className="w-full px-3 py-2 border border-gray-300 dark:border-zinc-600 rounded-md bg-white dark:bg-zinc-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
+          />
         </div>
+      </div>
 
-        <div className="flex flex-col gap-6 w-full">
-          {/* Options Section */}
-          <div className="bg-white dark:bg-zinc-900 rounded-lg shadow-md border border-gray-200 dark:border-zinc-700">
-            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-zinc-700">
-              <button
-                onClick={() => setOptionsExpanded(!optionsExpanded)}
-                className="text-lg font-semibold cursor-pointer hover:text-blue-600 dark:hover:text-blue-400 transition-colors"
-              >
+      <div className="flex flex-col gap-6 w-full">
+        {/* Options Section */}
+        <div className="bg-white dark:bg-zinc-900 rounded-lg shadow-md border border-gray-200 dark:border-zinc-700">
+          <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-zinc-700">
+            <button
+              onClick={() => setOptionsExpanded(!optionsExpanded)}
+              className="flex items-center gap-3 text-lg font-semibold cursor-pointer hover:text-blue-600 dark:hover:text-blue-400 transition-colors"
+            >
+              <ArrowIcon expanded={optionsExpanded} />
+              <span>
                 Options (Total: ${
                   options.reduce((sum, p) => sum + (typeof p.market_value === 'number' ? p.market_value : 0), 0)
                     .toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
                 })
-              </button>
-              
-              {optionsExpanded && (
-                <div className="relative">
-                  <button
-                    onClick={() => setShowOptionDropdown(!showOptionDropdown)}
-                    className="p-2 hover:bg-gray-100 dark:hover:bg-zinc-700 rounded-md transition-colors"
-                    aria-label="Toggle columns"
-                    type="button"
+              </span>
+            </button>
+            
+            {optionsExpanded && (
+              <div className="relative">
+                <button
+                  onClick={() => setShowOptionDropdown(!showOptionDropdown)}
+                  className="p-2 hover:bg-gray-100 dark:hover:bg-zinc-700 rounded-md transition-colors"
+                  aria-label="Toggle columns"
+                  type="button"
+                >
+                  <ThreeBarsIcon />
+                </button>
+                {showOptionDropdown && (
+                  <DndContext
+                    sensors={sensors}
+                    collisionDetection={closestCenter}
+                    onDragStart={handleOptionDragStart}
+                    onDragEnd={handleOptionDragEnd}
                   >
-                    <ThreeBarsIcon />
-                  </button>
-                  {showOptionDropdown && (
-                    <div className="absolute top-full right-0 bg-white dark:bg-zinc-800 p-3 border border-gray-200 dark:border-zinc-600 rounded-lg shadow-lg z-20 min-w-[200px]">
+                    <div className="absolute top-full right-0 bg-white dark:bg-zinc-800 p-4 border border-gray-200 dark:border-zinc-600 rounded-lg shadow-lg z-20 min-w-[220px]">
                       <div className="space-y-2">
-                        {(['Underlying', 'Strike', 'Type', 'Expiration', 'Quantity', 'Market Value', 'Unrealized P/L'] as const).map(col => (
-                          <label key={col} className="flex items-center gap-2 text-sm cursor-pointer hover:bg-gray-50 dark:hover:bg-zinc-700 p-1 rounded">
+                        <SortableContext items={visibleOptionColumns} strategy={verticalListSortingStrategy}>
+                          {visibleOptionColumns.map((col) => (
+                            <SortableOptionColumnItem
+                              key={col}
+                              col={col}
+                              checked={true}
+                              onToggle={() => toggleOptionColumn(col)}
+                            />
+                          ))}
+                        </SortableContext>
+                        
+                        {/* Show hidden columns as non-draggable checkboxes */}
+                        {hiddenOptionColumns.map((col) => (
+                          <div key={col} className="flex items-center gap-2 text-sm px-3 py-2 rounded bg-gray-50 dark:bg-zinc-700 border border-gray-200 dark:border-zinc-600">
+                            <div className="w-6"></div> {/* Spacer for drag handle */}
                             <input
                               type="checkbox"
-                              checked={visibleOptionColumns.includes(col)}
+                              checked={false}
                               onChange={() => toggleOptionColumn(col)}
                               className="cursor-pointer"
                               title={`Toggle ${col} column visibility`}
                             />
-                            <span>{col}</span>
-                          </label>
+                            <span className="select-none">{col}</span>
+                          </div>
                         ))}
+                        
+                        <div className="text-xs text-gray-500 mt-3 pt-2 border-t border-gray-200 dark:border-zinc-600">
+                          Drag visible columns to reorder
+                        </div>
                       </div>
                     </div>
-                  )}
-                </div>
-              )}
-            </div>
-            {optionsExpanded && (
-              <div className="p-6">
-                {renderOptionsTable(options)}
+                    <DragOverlay>
+                      {activeId && activeType === 'option' ? (
+                        <div className="flex items-center gap-2 text-sm cursor-move px-3 py-2 rounded bg-blue-100 dark:bg-blue-900/30 border border-blue-300 dark:border-blue-600 shadow-lg">
+                          <input
+                            type="checkbox"
+                            checked={true}
+                            readOnly
+                            className="cursor-pointer"
+                            title="Column checkbox"
+                          />
+                          <span className="select-none">{String(activeId)}</span>
+                        </div>
+                      ) : null}
+                    </DragOverlay>
+                  </DndContext>
+                )}
               </div>
             )}
           </div>
-          
-          {/* Equities Section */}
-          <div className="bg-white dark:bg-zinc-900 rounded-lg shadow-md border border-gray-200 dark:border-zinc-700">
-            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-zinc-700">
-              <button
-                onClick={() => setEquitiesExpanded(!equitiesExpanded)}
-                className="text-lg font-semibold cursor-pointer hover:text-blue-600 dark:hover:text-blue-400 transition-colors"
-              >
+          {optionsExpanded && (
+            <div className="p-6">
+              {renderOptionsTable(options)}
+            </div>
+          )}
+        </div>
+        
+        {/* Equities Section */}
+        <div className="bg-white dark:bg-zinc-900 rounded-lg shadow-md border border-gray-200 dark:border-zinc-700">
+          <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-zinc-700">
+            <button
+              onClick={() => setEquitiesExpanded(!equitiesExpanded)}
+              className="flex items-center gap-3 text-lg font-semibold cursor-pointer hover:text-blue-600 dark:hover:text-blue-400 transition-colors"
+            >
+              <ArrowIcon expanded={equitiesExpanded} />
+              <span>
                 Equities (Total: ${
                   equities.reduce((sum, p) => sum + (typeof p.market_value === 'number' ? p.market_value : 0), 0)
                     .toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
                 })
-              </button>
-              
-              {equitiesExpanded && (
-                <div className="relative">
-                  <button
-                    onClick={() => setShowEquityDropdown(!showEquityDropdown)}
-                    className="p-2 hover:bg-gray-100 dark:hover:bg-zinc-700 rounded-md transition-colors"
-                    aria-label="Toggle columns"
-                    type="button"
+              </span>
+            </button>
+            
+            {equitiesExpanded && (
+              <div className="relative">
+                <button
+                  onClick={() => setShowEquityDropdown(!showEquityDropdown)}
+                  className="p-2 hover:bg-gray-100 dark:hover:bg-zinc-700 rounded-md transition-colors"
+                  aria-label="Toggle columns"
+                  type="button"
+                >
+                  <ThreeBarsIcon />
+                </button>
+                {showEquityDropdown && (
+                  <DndContext
+                    sensors={sensors}
+                    collisionDetection={closestCenter}
+                    onDragStart={handleEquityDragStart}
+                    onDragEnd={handleEquityDragEnd}
                   >
-                    <ThreeBarsIcon />
-                  </button>
-                  {showEquityDropdown && (
                     <div className="absolute top-full right-0 bg-white dark:bg-zinc-800 p-4 border border-gray-200 dark:border-zinc-600 rounded-lg shadow-lg z-20 min-w-[220px]">
                       <div className="space-y-2">
                         <SortableContext items={visibleEquityColumns} strategy={verticalListSortingStrategy}>
                           {visibleEquityColumns.map((col) => (
-                            <SortableColumnItem
+                            <SortableEquityColumnItem
                               key={col}
                               col={col}
                               checked={true}
@@ -453,42 +579,33 @@ const PositionsPage = () => {
                         </div>
                       </div>
                     </div>
-                  )}
-                </div>
-              )}
-            </div>
-            {equitiesExpanded && (
-              <div className="p-6">
-                {renderEquitiesTable(equities)}
+                    <DragOverlay>
+                      {activeId && activeType === 'equity' ? (
+                        <div className="flex items-center gap-2 text-sm cursor-move px-3 py-2 rounded bg-blue-100 dark:bg-blue-900/30 border border-blue-300 dark:border-blue-600 shadow-lg">
+                          <input
+                            type="checkbox"
+                            checked={true}
+                            readOnly
+                            className="cursor-pointer"
+                            title="Column checkbox"
+                          />
+                          <span className="select-none">{String(activeId)}</span>
+                        </div>
+                      ) : null}
+                    </DragOverlay>
+                  </DndContext>
+                )}
               </div>
             )}
           </div>
+          {equitiesExpanded && (
+            <div className="p-6">
+              {renderEquitiesTable(equities)}
+            </div>
+          )}
         </div>
       </div>
-
-      <DragOverlay>
-        {activeId ? (
-          <div className="flex items-center gap-2 text-sm cursor-move px-3 py-2 rounded bg-blue-100 dark:bg-blue-900/30 border border-blue-300 dark:border-blue-600 shadow-lg">
-            <div className="flex items-center gap-1 text-gray-400">
-              <div className="w-1 h-1 bg-current rounded-full"></div>
-              <div className="w-1 h-1 bg-current rounded-full"></div>
-              <div className="w-1 h-1 bg-current rounded-full"></div>
-              <div className="w-1 h-1 bg-current rounded-full"></div>
-              <div className="w-1 h-1 bg-current rounded-full"></div>
-              <div className="w-1 h-1 bg-current rounded-full"></div>
-            </div>
-            <input
-              type="checkbox"
-              checked={true}
-              readOnly
-              className="cursor-pointer"
-              title="Column checkbox"
-            />
-            <span className="select-none">{String(activeId)}</span>
-          </div>
-        ) : null}
-      </DragOverlay>
-    </DndContext>
+    </div>
   );
 };
 

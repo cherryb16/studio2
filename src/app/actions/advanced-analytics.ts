@@ -1,7 +1,7 @@
 // src/app/actions/advanced-analytics.ts
 'use server';
 
-import { snaptrade } from './snaptrade';
+import { snaptrade } from './snaptrade-client';
 
 // ==================== SECTOR & INDUSTRY ANALYSIS ====================
 
