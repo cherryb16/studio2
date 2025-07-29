@@ -11,6 +11,16 @@ const firebaseConfig = {
   appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID,
 };
 
+// Debug logging
+console.log('Firebase Config Check:', {
+  hasApiKey: !!firebaseConfig.apiKey,
+  hasAuthDomain: !!firebaseConfig.authDomain,
+  hasProjectId: !!firebaseConfig.projectId,
+  hasStorageBucket: !!firebaseConfig.storageBucket,
+  hasMessagingSenderId: !!firebaseConfig.messagingSenderId,
+  hasAppId: !!firebaseConfig.appId,
+});
+
 let app: FirebaseApp;
 let auth: any;
 
@@ -18,6 +28,7 @@ let auth: any;
 const hasAllConfig = Object.values(firebaseConfig).every(Boolean);
 
 if (hasAllConfig) {
+  console.log('Firebase: Initializing with full config');
   app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
   auth = getAuth(app);
 } else {
@@ -27,19 +38,8 @@ if (hasAllConfig) {
     .map(([key]) => key)
   );
   
-  // Create a minimal mock auth object that won't crash the app
-  auth = {
-    currentUser: null,
-    onAuthStateChanged: () => () => {}, // Returns an unsubscribe function
-    signInWithEmailAndPassword: () => Promise.reject(new Error('Firebase not configured')),
-    createUserWithEmailAndPassword: () => Promise.reject(new Error('Firebase not configured')),
-    signInWithRedirect: () => Promise.reject(new Error('Firebase not configured')),
-    getRedirectResult: () => Promise.resolve(null),
-    signOut: () => Promise.reject(new Error('Firebase not configured')),
-  };
-  
-  // Create a dummy app object
-  app = {} as FirebaseApp;
+  // This might be causing your issues - let's throw an error instead
+  throw new Error('Firebase configuration is incomplete. Please check your environment variables.');
 }
 
 export { app, auth };
