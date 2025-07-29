@@ -2,9 +2,10 @@
 
 import { useSnapTradePositions } from '../../../hooks/useSnapTrade';
 import { useState, useMemo, useRef, useCallback } from 'react';
-import { DndProvider, useDrag, useDrop } from 'react-dnd';
+import { DndProvider } from 'react-dnd';
+import { useDrag, useDrop } from 'react-dnd';
 import { HTML5Backend } from 'react-dnd-html5-backend';
-import type { DropTargetMonitor, DragSourceMonitor } from 'react-dnd/dist/types';
+import type { DropTargetMonitor, DragSourceMonitor } from 'react-dnd';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Input } from '@/components/ui/input';
