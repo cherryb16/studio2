@@ -35,7 +35,9 @@ interface PerformanceChartProps {
   className?: string;
 }
 
-export function PerformanceChart({ className }: PerformanceChartProps) {
+export default PerformanceChart;
+
+export async function PerformanceChart({ className }: PerformanceChartProps) {
   return (
     <Card className={cn(className)}>
       <CardHeader>
