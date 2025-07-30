@@ -116,6 +116,7 @@ const SortableEquityColumnItem = ({
   return (
     <div
       ref={setNodeRef}
+      /* webhint-ignore no-inline-styles */
       style={style}
       {...attributes}
       {...listeners}
@@ -164,6 +165,7 @@ const SortableOptionColumnItem = ({
   return (
     <div
       ref={setNodeRef}
+      /* webhint-ignore no-inline-styles */
       style={style}
       {...attributes}
       {...listeners}
