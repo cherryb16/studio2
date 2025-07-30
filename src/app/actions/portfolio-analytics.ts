@@ -233,6 +233,8 @@ export function getTopPositions(holdingsData: HoldingsData, limit: number = 10) 
       const ticker = opt?.symbol?.option_symbol?.ticker || 'Unknown';
       const underlyingSymbol = opt?.symbol?.option_symbol?.underlying_symbol?.symbol || '';
       const optionType = opt?.symbol?.option_symbol?.option_type || '';
+      const currentValue = units * price * 100;
+      const costBasis = units * avgPurchasePrice;
       return {
         symbol: ticker,
         description: `${underlyingSymbol} ${optionType}`,
@@ -240,9 +242,8 @@ export function getTopPositions(holdingsData: HoldingsData, limit: number = 10) 
         value: Math.abs(units * price * 100),
         units,
         price,
-        unrealizedPnL: (units * price * 100) - (units * avgPurchasePrice * 100),
-        unrealizedPnLPercent: avgPurchasePrice ? 
-          ((price) - (avgPurchasePrice)) / (avgPurchasePrice) * 100 : 0
+        unrealizedPnL: currentValue - costBasis,
+        unrealizedPnLPercent: costBasis ? ((currentValue - costBasis) / costBasis) * 100 : 0
       };
     })
   ];
