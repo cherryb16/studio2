@@ -4,7 +4,7 @@
 import { AccountHoldingsAccount, Balance } from "snaptrade-typescript-sdk";
 
 // Types for better type safety
-interface Position {
+export interface Position {
   symbol: {
     symbol: {
       type: { code: string };
@@ -18,7 +18,7 @@ interface Position {
   average_purchase_price: number;
 }
 
-interface OptionPosition {
+export interface OptionPosition {
   symbol: {
     option_symbol: {
       ticker: string;
@@ -51,7 +51,7 @@ interface HoldingsData {
 export function calculateTotalBalance(holdingsData: HoldingsData): number {
   const cash = calculateCashBalance(holdingsData);
   const equities = calculateEquitiesBalance(holdingsData);
-  const options = calculateOptionsBalance(holdingsData);
+  const options = calculateOptionsBalance(holdingsData.option_positions);
   const crypto = calculateCryptoBalance(holdingsData);
   const other = calculateOtherAssetsBalance(holdingsData);
 
@@ -81,10 +81,11 @@ export function calculateBuyingPower(holdingsData: HoldingsData): number {
 
 // ==================== POSITION VALUE CALCULATIONS ====================
 
-export function calculateEquitiesBalance(holdingsData: HoldingsData): number {
+export function calculateEquitiesBalance(input: any): number {
+  const positions: any[] = Array.isArray(input) ? input : input.positions ?? [];
   const equityTypes = ['cs', 'et']; // Common Stock, ETF
   
-  return holdingsData.positions?.reduce((total, position) => {
+  return positions?.reduce((total, position) => {
     const typeCode = position.symbol?.symbol?.type?.code;
     if (equityTypes.includes(typeCode)) {
       return total + ((position.units || 0) * (position.price || 0));
@@ -93,14 +94,21 @@ export function calculateEquitiesBalance(holdingsData: HoldingsData): number {
   }, 0) || 0;
 }
 
-export function calculateOptionsBalance(holdingsData: HoldingsData): number {
-  return holdingsData.option_positions?.reduce((total, option) => {
-    return total + Math.abs((option.units || 0) * (option.price || 0) * 100); // Options are typically in contracts of 100
-  }, 0) || 0;
+export function calculateOptionsBalance(options: OptionPosition[] | null | undefined): number {
+  if (!Array.isArray(options)) {
+    console.warn('Expected options to be an array, got:', options);
+    return 0;
+  }
+
+  return options.reduce((total, option) => {
+    if (!option || !option.units || !option.price) return total;
+    return total + Math.abs((option.units || 0) * (option.price || 0) * 100);
+  }, 0);
 }
 
-export function calculateCryptoBalance(holdingsData: HoldingsData): number {
-  return holdingsData.positions?.reduce((total, position) => {
+export function calculateCryptoBalance(input: any): number {
+  const positions: any[] = Array.isArray(input) ? input : input.positions ?? [];
+  return positions?.reduce((total, position) => {
     const typeCode = position.symbol?.symbol?.type?.code;
     if (typeCode === 'crypto') {
       return total + ((position.units || 0) * (position.price || 0));
@@ -109,10 +117,11 @@ export function calculateCryptoBalance(holdingsData: HoldingsData): number {
   }, 0) || 0;
 }
 
-export function calculateOtherAssetsBalance(holdingsData: HoldingsData): number {
+export function calculateOtherAssetsBalance(input: any): number {
+  const positions: any[] = Array.isArray(input) ? input : input.positions ?? [];
   const knownTypes = ['cs', 'et', 'crypto']; // Common Stock, ETF, Crypto
   
-  return holdingsData.positions?.reduce((total, position) => {
+  return positions?.reduce((total, position) => {
     const typeCode = position.symbol?.symbol?.type?.code;
     if (!knownTypes.includes(typeCode)) {
       return total + ((position.units || 0) * (position.price || 0));
@@ -129,9 +138,10 @@ export function calculateTotalUnrealizedPnL(holdingsData: HoldingsData): number 
   }, 0) || 0;
 
   const optionsPnL = holdingsData.option_positions?.reduce((total, option) => {
+    if (!option) return total;
     // Calculate unrealized PnL for options
     const currentValue = (option.units || 0) * (option.price || 0) * 100;
-    const costBasis = (option.units || 0) * (option.average_purchase_price || 0);
+    const costBasis = (option.units || 0) * (option.average_purchase_price || 0) * 100;
     return total + (currentValue - costBasis);
   }, 0) || 0;
 
@@ -152,8 +162,9 @@ export function calculateEquitiesUnrealizedPnL(holdingsData: HoldingsData): numb
 
 export function calculateOptionsUnrealizedPnL(holdingsData: HoldingsData): number {
   return holdingsData.option_positions?.reduce((total, option) => {
+    if (!option) return total;
     const currentValue = (option.units || 0) * (option.price || 0) * 100;
-    const costBasis = (option.units || 0) * (option.average_purchase_price || 0);
+    const costBasis = (option.units || 0) * (option.average_purchase_price || 0) * 100;
     return total + (currentValue - costBasis);
   }, 0) || 0;
 }
@@ -194,7 +205,7 @@ export function calculatePortfolioComposition(holdingsData: HoldingsData) {
   return {
     cash: (calculateCashBalance(holdingsData) / totalValue) * 100,
     equities: (calculateEquitiesBalance(holdingsData) / totalValue) * 100,
-    options: (calculateOptionsBalance(holdingsData) / totalValue) * 100,
+    options: (calculateOptionsBalance(holdingsData.option_positions) / totalValue) * 100,
     crypto: (calculateCryptoBalance(holdingsData) / totalValue) * 100,
     other: (calculateOtherAssetsBalance(holdingsData) / totalValue) * 100
   };
@@ -215,17 +226,25 @@ export function getTopPositions(holdingsData: HoldingsData, limit: number = 10) 
       unrealizedPnLPercent: pos.average_purchase_price ? 
         ((pos.price || 0) - (pos.average_purchase_price || 0)) / (pos.average_purchase_price || 0) * 100 : 0
     })),
-    ...(holdingsData.option_positions || []).map(opt => ({
-      symbol: opt.symbol?.option_symbol?.ticker || 'Unknown',
-      description: `${opt.symbol?.option_symbol?.underlying_symbol?.symbol} ${opt.symbol?.option_symbol?.option_type}`,
-      type: 'option',
-      value: Math.abs((opt.units || 0) * (opt.price || 0) * 100),
-      units: opt.units || 0,
-      price: opt.price || 0,
-      unrealizedPnL: ((opt.units || 0) * (opt.price || 0) * 100) - ((opt.units || 0) * (opt.average_purchase_price || 0) * 100),
-      unrealizedPnLPercent: opt.average_purchase_price ? 
-        ((opt.price || 0) - (opt.average_purchase_price || 0)) / (opt.average_purchase_price || 0) * 100 : 0
-    }))
+    ...(holdingsData.option_positions || []).map(opt => {
+      const units = opt?.units || 0;
+      const price = opt?.price || 0;
+      const avgPurchasePrice = opt?.average_purchase_price || 0;
+      const ticker = opt?.symbol?.option_symbol?.ticker || 'Unknown';
+      const underlyingSymbol = opt?.symbol?.option_symbol?.underlying_symbol?.symbol || '';
+      const optionType = opt?.symbol?.option_symbol?.option_type || '';
+      return {
+        symbol: ticker,
+        description: `${underlyingSymbol} ${optionType}`,
+        type: 'option',
+        value: Math.abs(units * price * 100),
+        units,
+        price,
+        unrealizedPnL: (units * price * 100) - (units * avgPurchasePrice * 100),
+        unrealizedPnLPercent: avgPurchasePrice ? 
+          ((price) - (avgPurchasePrice)) / (avgPurchasePrice) * 100 : 0
+      };
+    })
   ];
 
   return allPositions
@@ -358,10 +377,10 @@ export function generatePortfolioSummary(holdingsData: HoldingsData) {
     buyingPower: calculateBuyingPower(holdingsData),
     
     assetBalances: {
-      equities: calculateEquitiesBalance(holdingsData),
-      options: calculateOptionsBalance(holdingsData),
-      crypto: calculateCryptoBalance(holdingsData),
-      other: calculateOtherAssetsBalance(holdingsData)
+      equities: calculateEquitiesBalance(holdingsData.positions),
+      options: calculateOptionsBalance(holdingsData.option_positions),
+      crypto: calculateCryptoBalance(holdingsData.positions),
+      other: calculateOtherAssetsBalance(holdingsData.positions)
     },
     
     unrealizedPnL: {
