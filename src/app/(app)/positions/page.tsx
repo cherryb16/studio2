@@ -1,5 +1,31 @@
 'use client';
 
+import type { OptionPosition } from '@/app/actions/portfolio-analytics';
+
+function toOptionPositions(positions: Position[]): OptionPosition[] {
+  return positions
+    .filter(p => p.symbol?.option_symbol)
+    .map(p => ({
+      symbol: {
+        option_symbol: {
+          ticker: p.symbol?.symbol ?? '',
+          option_type: p.symbol?.option_symbol?.option_type === 'CALL' ? 'CALL' : 'PUT',
+          strike_price: p.symbol?.option_symbol?.strike_price ?? 0,
+          expiration_date: p.symbol?.option_symbol?.expiration_date ?? '',
+          underlying_symbol: {
+            symbol: p.symbol?.option_symbol?.underlying_symbol?.symbol ?? '',
+            description: p.symbol?.description ?? '',
+          },
+        },
+      },
+      units: p.units ?? 0,
+      price: p.price ?? 0,
+      average_purchase_price: p.average_purchase_price ?? 0,
+      currency: p.currency?.code ? { code: p.currency.code } : { code: 'USD' },
+    }));
+}
+
+
 import React, { useState, useMemo } from 'react';
 import {
   DndContext,
@@ -82,21 +108,20 @@ const SortableEquityColumnItem = ({
     isDragging,
   } = useSortable({ id: col });
 
-  const dragStyle = {
-    transform: CSS.Transform.toString(transform),
-    transition,
-    zIndex: isDragging ? 1000 : 'auto',
-  } as React.CSSProperties;
+  const dragStyleClass = isDragging ? 'z-[1000] transition-transform' : '';
+  const transformStyle = transform ? CSS.Transform.toString(transform) : undefined;
+  // Use inline style only for transform (not transition/zIndex)
+  const style = transformStyle ? { transform: transformStyle } : undefined;
 
   return (
     <div
       ref={setNodeRef}
-      style={dragStyle}
+      style={style}
       {...attributes}
       {...listeners}
-      className={`flex items-center gap-2 text-sm cursor-move px-3 py-2 rounded transition-all border ${
-        isDragging 
-          ? 'bg-blue-100 dark:bg-blue-900/30 border-blue-300 dark:border-blue-600 opacity-50 z-50' 
+      className={`${dragStyleClass} flex items-center gap-2 text-sm cursor-move px-3 py-2 rounded transition-all border ${
+        isDragging
+          ? 'bg-blue-100 dark:bg-blue-900/30 border-blue-300 dark:border-blue-600 opacity-50 z-50'
           : 'bg-gray-50 dark:bg-zinc-700 border-gray-200 dark:border-zinc-600 hover:bg-gray-100 dark:hover:bg-zinc-600'
       }`}
     >
@@ -132,21 +157,19 @@ const SortableOptionColumnItem = ({
     isDragging,
   } = useSortable({ id: col });
 
-  const dragStyle = {
-    transform: CSS.Transform.toString(transform),
-    transition,
-    zIndex: isDragging ? 1000 : 'auto',
-  } as React.CSSProperties;
+  const dragStyleClass = isDragging ? 'z-[1000] transition-transform' : '';
+  const transformStyle = transform ? CSS.Transform.toString(transform) : undefined;
+  const style = transformStyle ? { transform: transformStyle } : undefined;
 
   return (
     <div
       ref={setNodeRef}
-      style={dragStyle}
+      style={style}
       {...attributes}
       {...listeners}
-      className={`flex items-center gap-2 text-sm cursor-move px-3 py-2 rounded transition-all border ${
-        isDragging 
-          ? 'bg-blue-100 dark:bg-blue-900/30 border-blue-300 dark:border-blue-600 opacity-50 z-50' 
+      className={`${dragStyleClass} flex items-center gap-2 text-sm cursor-move px-3 py-2 rounded transition-all border ${
+        isDragging
+          ? 'bg-blue-100 dark:bg-blue-900/30 border-blue-300 dark:border-blue-600 opacity-50 z-50'
           : 'bg-gray-50 dark:bg-zinc-700 border-gray-200 dark:border-zinc-600 hover:bg-gray-100 dark:hover:bg-zinc-600'
       }`}
     >
@@ -162,6 +185,7 @@ const SortableOptionColumnItem = ({
     </div>
   );
 };
+import { calculateEquitiesBalance, calculateOptionsBalance } from '@/app/actions/portfolio-analytics';
 
 // Three bars icon component
 const ThreeBarsIcon = () => (
@@ -218,7 +242,7 @@ const PositionsPage = () => {
     'Underlying', 'Strike', 'Type', 'Expiration', 'Quantity', 'Market Value', 'Unrealized P/L',
   ]);
 
-  const { equities, options } = useMemo(() => {
+  const { equities, options }: { equities: Position[]; options: Position[] } = useMemo(() => {
     let filtered = safePositions;
     if (filter) {
       filtered = filtered.filter(position => {
@@ -431,7 +455,7 @@ const PositionsPage = () => {
               <ArrowIcon expanded={optionsExpanded} />
               <span>
                 Options (Total: ${
-                  options.reduce((sum, p) => sum + (typeof p.market_value === 'number' ? p.market_value : 0), 0)
+                  calculateOptionsBalance(toOptionPositions(options))
                     .toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
                 })
               </span>
@@ -523,7 +547,7 @@ const PositionsPage = () => {
               <ArrowIcon expanded={equitiesExpanded} />
               <span>
                 Equities (Total: ${
-                  equities.reduce((sum, p) => sum + (typeof p.market_value === 'number' ? p.market_value : 0), 0)
+                  calculateEquitiesBalance(equities)
                     .toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
                 })
               </span>
