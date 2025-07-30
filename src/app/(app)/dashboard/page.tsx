@@ -106,6 +106,7 @@ const DashboardPage = () => {
             <select
               id="accountSelect"
               title="Select Account"
+              aria-label="Select Account"
               value={selectedAccount || 'all'}
               onChange={e => setSelectedAccount(e.target.value === 'all' ? undefined : e.target.value)}
               className="border rounded p-2"
