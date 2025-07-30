@@ -141,7 +141,7 @@ export function calculateTotalUnrealizedPnL(holdingsData: HoldingsData): number 
     if (!option) return total;
     // Calculate unrealized PnL for options
     const currentValue = (option.units || 0) * (option.price || 0) * 100;
-    const costBasis = (option.units || 0) * (option.average_purchase_price || 0) * 100;
+    const costBasis = (option.units || 0) * (option.average_purchase_price || 0);
     return total + (currentValue - costBasis);
   }, 0) || 0;
 
@@ -164,7 +164,7 @@ export function calculateOptionsUnrealizedPnL(holdingsData: HoldingsData): numbe
   return holdingsData.option_positions?.reduce((total, option) => {
     if (!option) return total;
     const currentValue = (option.units || 0) * (option.price || 0) * 100;
-    const costBasis = (option.units || 0) * (option.average_purchase_price || 0) * 100;
+    const costBasis = (option.units || 0) * (option.average_purchase_price || 0);
     return total + (currentValue - costBasis);
   }, 0) || 0;
 }
