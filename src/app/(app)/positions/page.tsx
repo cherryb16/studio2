@@ -54,7 +54,8 @@ type EquityCol =
   | 'Value'
   | 'Quantity'
   | 'Purchase Price'
-  | 'Unrealized P/L';
+  | 'Unrealized P/L'
+  | 'P/L %';
 
 // Option column types
 type OptionCol =
@@ -63,8 +64,11 @@ type OptionCol =
   | 'Type'
   | 'Expiration'
   | 'Quantity'
-  | 'Market Value'
-  | 'Unrealized P/L';
+  | 'Price'
+  | 'Purchase Price'
+  | 'Value'
+  | 'Unrealized P/L'
+  | 'P/L %';
 
 interface Position {
   symbol: {
@@ -81,7 +85,7 @@ interface Position {
     security_type?: any;
   } | null | undefined;
   price: number | null | undefined;
-  market_value: number | null | undefined;
+  value: number | null | undefined;
   units: number | null | undefined;
   average_purchase_price: number | null | undefined;
   realized_pnl: number | null | undefined;
@@ -187,7 +191,12 @@ const SortableOptionColumnItem = ({
     </div>
   );
 };
-import { calculateEquitiesBalance, calculateOptionsBalance } from '@/app/actions/portfolio-analytics';
+import {
+  calculateEquitiesBalance,
+  calculateOptionsBalance,
+  calculateCryptoBalance,
+  calculateOtherAssetsBalance
+} from '@/app/actions/portfolio-analytics';
 
 // Three bars icon component
 const ThreeBarsIcon = () => (
@@ -237,11 +246,11 @@ const PositionsPage = () => {
   const [equitiesExpanded, setEquitiesExpanded] = useState(true);
   
   const [visibleEquityColumns, setVisibleEquityColumns] = useState<EquityCol[]>([
-    'Symbol', 'Price', 'Value', 'Quantity', 'Purchase Price', 'Unrealized P/L',
+    'Symbol', 'Price', 'Value', 'Quantity', 'Purchase Price', 'Unrealized P/L', 'P/L %'
   ]);
 
   const [visibleOptionColumns, setVisibleOptionColumns] = useState<OptionCol[]>([
-    'Underlying', 'Strike', 'Type', 'Expiration', 'Quantity', 'Market Value', 'Unrealized P/L',
+    'Underlying', 'Strike', 'Type', 'Expiration', 'Quantity', 'Price', 'Purchase Price', 'Value', 'Unrealized P/L', 'P/L %'
   ]);
 
   const { equities, options }: { equities: Position[]; options: Position[] } = useMemo(() => {
@@ -352,11 +361,42 @@ const PositionsPage = () => {
                   {visibleEquityColumns.map((col) => (
                     <td key={col} className="p-3 text-gray-800 dark:text-gray-200">
                       {col === 'Symbol' && String(symbolToDisplay)}
-                      {col === 'Price' && (typeof position.price === 'number' ? position.price.toFixed(2) : '-')}
-                      {col === 'Value' && (typeof position.market_value === 'number' ? position.market_value.toFixed(2) : '-')}
-                      {col === 'Quantity' && String(position.units || '-')}
-                      {col === 'Purchase Price' && (typeof position.average_purchase_price === 'number' ? position.average_purchase_price.toFixed(2) : '-')}
-                      {col === 'Unrealized P/L' && (typeof position.open_pnl === 'number' ? position.open_pnl.toFixed(2) : '-')}
+                      {col === 'Price' &&
+                        (typeof position.price === 'number'
+                          ? (
+                            position.price < 0
+                              ? `-$${Math.abs(position.price).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                              : `$${(position.price).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                          )
+                          : '-')}
+                      {col === 'Value' &&
+                        (
+                          (position.units || 0) * (position.price || 0) < 0
+                            ? `-$${Math.abs((position.units || 0) * (position.price || 0)).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                            : `$${((position.units || 0) * (position.price || 0)).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                        )}
+                      {col === 'Quantity' && (position.units || 0).toFixed(2)}
+                      {col === 'Purchase Price' &&
+                        (typeof position.average_purchase_price === 'number'
+                          ? (
+                            position.average_purchase_price < 0
+                              ? `-$${Math.abs(position.average_purchase_price).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                              : `$${(position.average_purchase_price).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                          )
+                          : '-')}
+                      {col === 'Unrealized P/L' &&
+                        (typeof position.open_pnl === 'number'
+                          ? (
+                            position.open_pnl < 0
+                              ? `-$${Math.abs(position.open_pnl).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                              : `$${(position.open_pnl).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                          )
+                          : '-')}
+                      {col === 'P/L %' && (
+                        position.average_purchase_price
+                          ? `${(((position.price || 0) - (position.average_purchase_price || 0)) / (position.average_purchase_price || 0) * 100).toFixed(2)}%`
+                          : '-'
+                      )}
                     </td>
                   ))}
                 </tr>
@@ -402,8 +442,52 @@ const PositionsPage = () => {
                       {col === 'Type' && String(type)}
                       {col === 'Expiration' && String(expiration)}
                       {col === 'Quantity' && String(position.units || '-')}
-                      {col === 'Market Value' && (typeof position.market_value === 'number' ? position.market_value.toFixed(2) : '-')}
-                      {col === 'Unrealized P/L' && (typeof position.open_pnl === 'number' ? position.open_pnl.toFixed(2) : '-')}
+                      {col === 'Price' &&
+                        (
+                          (position.price || 0) < 0
+                            ? `-$${Math.abs(position.price || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                            : `$${(position.price || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                        )}
+                      {col === 'Purchase Price' &&
+                        (
+                          (position.average_purchase_price || 0) < 0
+                            ? `-$${Math.abs(position.average_purchase_price || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                            : `$${(position.average_purchase_price || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                        )}
+                      {col === 'Value' &&
+                        (
+                          ((position.units || 0) * (position.price || 0) * 100) < 0
+                            ? `-$${Math.abs((position.units || 0) * (position.price || 0) * 100).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                            : `$${((position.units || 0) * (position.price || 0) * 100).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                        )}
+                      {col === 'Unrealized P/L' && (
+                        (() => {
+                          const units = position.units || 0;
+                          const price = position.price || 0;
+                          const currentValue = units * price * 100;
+                          const costBasis = units * (position.average_purchase_price || 0);
+                          const pnl = currentValue - costBasis;
+                          return pnl < 0
+                            ? `-$${Math.abs(pnl).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                            : `$${pnl.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+                        })()
+                      )}
+                      {col === 'P/L %' && (
+                        position.average_purchase_price
+                          ? (() => {
+                              const units = position.units || 0;
+                              const price = position.price || 0;
+                              // current market value per contract
+                              const currentValue = units * price * 100;
+                              // purchase price already multiplied by 100
+                              const costBasis = units * (position.average_purchase_price || 0);
+                              const pnlPercent = costBasis !== 0 
+                                ? ((currentValue - costBasis) / Math.abs(costBasis) * 100)
+                                : 0;
+                              return `${pnlPercent.toFixed(2)}%`;
+                            })()
+                          : '-'
+                      )}
                     </td>
                   ))}
                 </tr>
@@ -417,11 +501,11 @@ const PositionsPage = () => {
 
   // All column types
   const allEquityColumns: EquityCol[] = [
-    'Symbol', 'Price', 'Value', 'Quantity', 'Purchase Price', 'Unrealized P/L'
+    'Symbol', 'Price', 'Value', 'Quantity', 'Purchase Price', 'Unrealized P/L', 'P/L %'
   ];
 
   const allOptionColumns: OptionCol[] = [
-    'Underlying', 'Strike', 'Type', 'Expiration', 'Quantity', 'Market Value', 'Unrealized P/L'
+    'Underlying', 'Strike', 'Type', 'Expiration', 'Quantity', 'Price', 'Purchase Price', 'Value', 'Unrealized P/L', 'P/L %'
   ];
 
   // Get columns not currently visible
@@ -549,8 +633,11 @@ const PositionsPage = () => {
               <ArrowIcon expanded={equitiesExpanded} />
               <span>
                 Equities (Total: ${
-                  calculateEquitiesBalance(equities)
-                    .toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+                  (
+                    calculateEquitiesBalance(equities) +
+                    calculateCryptoBalance(equities) +
+                    calculateOtherAssetsBalance(equities)
+                  ).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
                 })
               </span>
             </button>
