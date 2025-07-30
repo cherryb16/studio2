@@ -1,5 +1,5 @@
 // src/app/actions/advanced-analytics.ts
-'use server';
+
 
 import { snaptrade } from './snaptrade-client';
 
