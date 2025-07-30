@@ -140,16 +140,14 @@ const DashboardPage = () => {
 
           {/* Overview */}
           <TabsContent value="overview">
-            <div className="grid md:grid-cols-2 lg:grid-cols-7 gap-4">
-              <AssetAllocation />
-              <QuickStats analyticsData={analyticsData} riskData={riskData} />
+            <div className="grid md:grid-cols-2 gap-4">
+              <div>
+                <AssetAllocation />
+              </div>
+              <div>
+                <QuickStats analyticsData={analyticsData} riskData={riskData} />
+              </div>
             </div>
-            <MainValueCards
-              analyticsData={analyticsData}
-              riskData={riskData}
-              performanceData={performanceData}
-              variant="secondary"
-            />
           </TabsContent>
 
           {/* Positions */}
