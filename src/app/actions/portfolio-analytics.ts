@@ -49,7 +49,22 @@ interface HoldingsData {
 // ==================== BALANCE CALCULATIONS ====================
 
 export function calculateTotalBalance(holdingsData: HoldingsData): number {
-  return holdingsData.total_value?.value || 0;
+  const cash = calculateCashBalance(holdingsData);
+  const equities = calculateEquitiesBalance(holdingsData);
+  const options = calculateOptionsBalance(holdingsData);
+  const crypto = calculateCryptoBalance(holdingsData);
+  const other = calculateOtherAssetsBalance(holdingsData);
+
+  console.log('Component balances contributing to total value:');
+  console.log('Cash:', cash);
+  console.log('Equities:', equities);
+  console.log('Options:', options);
+  console.log('Crypto:', crypto);
+  console.log('Other:', other);
+
+  const total = cash + equities + options + crypto + other;
+  console.log('Manually calculated total balance:', total);
+  return total;
 }
 
 export function calculateCashBalance(holdingsData: HoldingsData): number {
