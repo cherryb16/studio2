@@ -1,5 +1,5 @@
 // src/app/actions/portfolio-analytics.ts
-'use server';
+
 
 import { AccountHoldingsAccount, Balance } from "snaptrade-typescript-sdk";
 
