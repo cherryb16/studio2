@@ -31,13 +31,13 @@ const chartConfig = {
   },
 } satisfies ChartConfig;
 
-interface PerformanceChartProps {
+interface AssetAllocationProps {
   className?: string;
 }
 
-export default PerformanceChart;
+export default AssetAllocation;
 
-export async function PerformanceChart({ className }: PerformanceChartProps) {
+export function AssetAllocation({ className }: AssetAllocationProps) {
   return (
     <Card className={cn(className)}>
       <CardHeader>
