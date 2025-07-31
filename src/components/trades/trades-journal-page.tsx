@@ -415,17 +415,12 @@ export default function TradesJournalPage() {
                           )}
                         </TableCell>
                         <TableCell>
-                          {hasJournal ? (
-                            <Badge variant="outline" className="gap-1">
-                              <BookOpen className="h-3 w-3" />
-                              Noted
-                            </Badge>
-                          ) : (
-                            <Badge variant="outline" className="gap-1">
+                          hasJournal ? (
+                            <Badge variant="outline" className="gap-1 text-muted-foreground">
                               <FileText className="h-3 w-3" />
-                              Note
+                              Add Note
                             </Badge>
-                          )}
+                          ):
                         </TableCell>
                       </TableRow>
                     );
@@ -437,56 +432,96 @@ export default function TradesJournalPage() {
         </CardContent>
       </Card>
 
-      {/* Journal Modal */}
+      {/* Journal Dialog */}
       <Dialog open={isJournalOpen} onOpenChange={setIsJournalOpen}>
-        <DialogContent className="sm:max-w-lg">
+        <DialogContent className="max-w-2xl">
           <DialogHeader>
-            <DialogTitle>Journal Entry</DialogTitle>
+            <DialogTitle>Trade Journal Entry</DialogTitle>
           </DialogHeader>
-
           {selectedTrade && (
             <div className="space-y-4">
-              <div>
-                <div className="font-medium">{selectedTrade.symbol}</div>
-                <div className="text-sm text-muted-foreground">
-                  {format(selectedTrade.executedAt, 'PPpp')}
-                </div>
-              </div>
-
-              <Textarea
-                value={journalNotes}
-                onChange={(e) => setJournalNotes(e.target.value)}
-                placeholder="Write your thoughts about this trade..."
-                rows={6}
-              />
-
-              {loadingPrompts ? (
-                <p className="text-sm text-muted-foreground italic">Loading AI suggestions...</p>
-              ) : (
-                aiPrompts.length > 0 && (
-                  <div className="space-y-2">
-                    <div className="text-sm font-medium">AI Prompts</div>
-                    <div className="flex flex-wrap gap-2">
-                      {aiPrompts.map((prompt, idx) => (
-                        <Badge
-                          key={idx}
-                          variant="secondary"
-                          className="cursor-pointer hover:bg-primary/20"
-                          onClick={() => addPromptToNotes(prompt)}
-                        >
-                          {prompt}
-                        </Badge>
-                      ))}
+              {/* Trade Summary */}
+              <Card>
+                <CardContent className="pt-6">
+                  <div className="grid grid-cols-2 gap-4 text-sm">
+                    <div>
+                      <span className="text-muted-foreground">Symbol:</span>{' '}
+                      <span className="font-medium">{selectedTrade.symbol}</span>
                     </div>
+                    <div>
+                      <span className="text-muted-foreground">Date:</span>{' '}
+                      <span className="font-medium">
+                        {format(selectedTrade.executedAt, 'MMM dd, yyyy HH:mm')}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-muted-foreground">Action:</span>{' '}
+                      <Badge variant={selectedTrade.action === 'BUY' ? 'default' : 'destructive'}>
+                        {selectedTrade.action}
+                      </Badge>
+                    </div>
+                    <div>
+                      <span className="text-muted-foreground">Quantity:</span>{' '}
+                      <span className="font-medium">{selectedTrade.units}</span>
+                    </div>
+                    <div>
+                      <span className="text-muted-foreground">Price:</span>{' '}
+                      <span className="font-medium">{formatCurrency(selectedTrade.price)}</span>
+                    </div>
+                    {selectedTrade.realizedPnL !== undefined && (
+                      <div>
+                        <span className="text-muted-foreground">P&L:</span>{' '}
+                        <span className={`font-medium ${selectedTrade.realizedPnL >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                          {formatCurrency(selectedTrade.realizedPnL)}
+                        </span>
+                      </div>
+                    )}
                   </div>
-                )
+                </CardContent>
+              </Card>
+
+              {/* AI Prompts */}
+              {loadingPrompts ? (
+                <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Getting AI suggestions...
+                </div>
+              ) : aiPrompts.length > 0 && (
+                <div className="space-y-2">
+                  <p className="text-sm font-medium">Reflection prompts:</p>
+                  <div className="flex flex-wrap gap-2">
+                    {aiPrompts.map((prompt, index) => (
+                      <Button
+                        key={index}
+                        variant="outline"
+                        size="sm"
+                        onClick={() => addPromptToNotes(prompt)}
+                      >
+                        {prompt}
+                      </Button>
+                    ))}
+                  </div>
+                </div>
               )}
 
+              {/* Journal Notes */}
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Journal Notes</label>
+                <Textarea
+                  value={journalNotes}
+                  onChange={(e) => setJournalNotes(e.target.value)}
+                  placeholder="Document your thoughts, analysis, and lessons learned..."
+                  rows={8}
+                />
+              </div>
+
               <div className="flex justify-end gap-2">
-                <Button variant="ghost" onClick={() => setIsJournalOpen(false)}>
+                <Button variant="outline" onClick={() => setIsJournalOpen(false)}>
                   Cancel
                 </Button>
-                <Button onClick={saveJournalEntry}>Save Entry</Button>
+                <Button onClick={saveJournalEntry} disabled={!journalNotes.trim()}>
+                  Save Entry
+                </Button>
               </div>
             </div>
           )}

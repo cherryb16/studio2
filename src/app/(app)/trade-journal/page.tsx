@@ -3,7 +3,11 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useAuth } from '@/hooks/use-auth';
-import { getEnhancedTrades, getTradeSummaryStats } from '@/app/actions/snaptrade-trades';
+import { 
+  getEnhancedTradeActivities, 
+  getTradesSummaryStats,
+  type EnhancedTradeActivity 
+} from '@/app/actions/snaptrade-trades-enhanced';
 import { getJournalPrompts } from '@/app/actions';
 import {
   Card,
@@ -41,10 +45,12 @@ import {
   Target,
   Loader2,
   BookOpen,
-  BarChart3
+  BarChart3,
+  Timer,
+  Zap,
+  Award
 } from 'lucide-react';
 import { format } from 'date-fns';
-import type { EnhancedTrade } from '@/app/actions/snaptrade-trades';
 import type { Trade } from '@/lib/types';
 
 interface JournalEntry {
@@ -56,10 +62,10 @@ interface JournalEntry {
   tags?: string[];
 }
 
-export default function TradesJournalPage() {
+export default function EnhancedTradeJournalPage() {
   const { user } = useAuth();
   const [selectedPeriod, setSelectedPeriod] = useState<'day' | 'week' | 'month' | 'year' | 'all'>('month');
-  const [selectedTrade, setSelectedTrade] = useState<EnhancedTrade | null>(null);
+  const [selectedTrade, setSelectedTrade] = useState<EnhancedTradeActivity | null>(null);
   const [isJournalOpen, setIsJournalOpen] = useState(false);
   const [journalNotes, setJournalNotes] = useState('');
   const [loadingPrompts, setLoadingPrompts] = useState(false);
@@ -77,10 +83,10 @@ export default function TradesJournalPage() {
     enabled: !!user?.uid,
   });
 
-  // Fetch trades
+  // Fetch trade activities
   const { data: trades, isLoading: tradesLoading } = useQuery({
-    queryKey: ['trades', credentials?.snaptradeUserId, credentials?.userSecret, selectedPeriod],
-    queryFn: () => getEnhancedTrades(
+    queryKey: ['tradeActivities', credentials?.snaptradeUserId, credentials?.userSecret, selectedPeriod],
+    queryFn: () => getEnhancedTradeActivities(
       credentials!.snaptradeUserId,
       credentials!.userSecret,
       selectedPeriod === 'all' ? undefined : getStartDate(selectedPeriod)
@@ -91,7 +97,7 @@ export default function TradesJournalPage() {
   // Fetch trade statistics
   const { data: stats } = useQuery({
     queryKey: ['tradeStats', credentials?.snaptradeUserId, credentials?.userSecret, selectedPeriod],
-    queryFn: () => getTradeSummaryStats(
+    queryFn: () => getTradesSummaryStats(
       credentials!.snaptradeUserId,
       credentials!.userSecret,
       selectedPeriod
@@ -127,7 +133,7 @@ export default function TradesJournalPage() {
     return date;
   };
 
-  const handleJournalOpen = async (trade: EnhancedTrade) => {
+  const handleJournalOpen = async (trade: EnhancedTradeActivity) => {
     setSelectedTrade(trade);
     setIsJournalOpen(true);
     
@@ -135,17 +141,17 @@ export default function TradesJournalPage() {
     const existingEntry = journalEntries?.find((entry: JournalEntry) => entry.tradeId === trade.id);
     setJournalNotes(existingEntry?.notes || '');
     
-    // Get AI prompts
-    if (!existingEntry) {
+    // Get AI prompts for closed trades
+    if (!existingEntry && trade.status === 'closed') {
       setLoadingPrompts(true);
       try {
         const tradeForPrompts: Trade = {
           id: trade.id,
-          instrument: trade.symbol,
+          instrument: trade.instrument,
           date: format(trade.executedAt, 'yyyy-MM-dd'),
           entryPrice: trade.entryPrice || trade.price,
           exitPrice: trade.exitPrice || trade.price,
-          position: trade.position === 'close' ? 'long' : trade.position,
+          position: 'long', // Simplified for now
           pnl: trade.realizedPnL || 0,
           status: trade.realizedPnL ? (trade.realizedPnL > 0 ? 'win' : trade.realizedPnL < 0 ? 'loss' : 'breakeven') : 'breakeven'
         };
@@ -203,6 +209,17 @@ export default function TradesJournalPage() {
     return `${value >= 0 ? '+' : ''}${value.toFixed(2)}%`;
   };
 
+  const getActionBadgeColor = (action: string) => {
+    switch (action) {
+      case 'BUY': return 'bg-green-100 text-green-800 border-green-200';
+      case 'SELL': return 'bg-red-100 text-red-800 border-red-200';
+      case 'EXPIRE': return 'bg-orange-100 text-orange-800 border-orange-200';
+      case 'ASSIGN': return 'bg-purple-100 text-purple-800 border-purple-200';
+      case 'EXERCISE': return 'bg-blue-100 text-blue-800 border-blue-200';
+      default: return 'bg-gray-100 text-gray-800 border-gray-200';
+    }
+  };
+
   if (!user || !credentials) {
     return (
       <Card className="max-w-md mx-auto mt-32">
@@ -229,13 +246,13 @@ export default function TradesJournalPage() {
       <div>
         <h1 className="text-3xl font-bold">Trading Activity & Journal</h1>
         <p className="text-muted-foreground">
-          Track your trades and document your trading insights
+          Track your trades, options activity, and document your insights
         </p>
       </div>
 
-      {/* Summary Stats */}
+      {/* Enhanced Summary Stats */}
       {stats && !('error' in stats) && (
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-5">
           <Card>
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
               <CardTitle className="text-sm font-medium">Total P&L</CardTitle>
@@ -261,7 +278,7 @@ export default function TradesJournalPage() {
                 {stats.winRate.toFixed(1)}%
               </div>
               <p className="text-xs text-muted-foreground">
-                {stats.winningTrades} wins / {stats.losingTrades} losses
+                {stats.winningTrades}W / {stats.losingTrades}L
               </p>
             </CardContent>
           </Card>
@@ -283,13 +300,26 @@ export default function TradesJournalPage() {
 
           <Card>
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Total Trades</CardTitle>
+              <CardTitle className="text-sm font-medium">Options Activity</CardTitle>
+              <Zap className="h-4 w-4 text-muted-foreground" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold">{stats.optionTrades}</div>
+              <p className="text-xs text-muted-foreground">
+                {stats.tradesByType.optionExpired} expired
+              </p>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">Total Activity</CardTitle>
               <BarChart3 className="h-4 w-4 text-muted-foreground" />
             </CardHeader>
             <CardContent>
               <div className="text-2xl font-bold">{stats.totalTrades}</div>
               <p className="text-xs text-muted-foreground">
-                Fees: {formatCurrency(stats.totalFees)}
+                Fees: {formatCurrency(stats.totalCommissions)}
               </p>
             </CardContent>
           </Card>
@@ -310,12 +340,12 @@ export default function TradesJournalPage() {
         ))}
       </div>
 
-      {/* Trades Table */}
+      {/* Enhanced Trades Table */}
       <Card>
         <CardHeader>
-          <CardTitle>Trade History</CardTitle>
+          <CardTitle>Trade Activity</CardTitle>
           <CardDescription>
-            Click on any trade to add or view journal notes
+            All your trading activity including stocks and options. Click any trade to add journal notes.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -344,6 +374,7 @@ export default function TradesJournalPage() {
                     <TableHead className="text-right">Price</TableHead>
                     <TableHead className="text-right">Total</TableHead>
                     <TableHead className="text-right">P&L</TableHead>
+                    <TableHead>Status</TableHead>
                     <TableHead>Journal</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -369,43 +400,50 @@ export default function TradesJournalPage() {
                             </div>
                           </div>
                         </TableCell>
+                        
                         <TableCell>
                           <div>
                             <div className="font-medium">{trade.symbol}</div>
-                            {trade.isOption && (
+                            {trade.isOption && trade.optionDetails && (
                               <div className="text-xs text-muted-foreground">
-                                {trade.optionDetails?.type} ${trade.optionDetails?.strike}
+                                {trade.optionDetails.type} ${trade.optionDetails.strike} {format(new Date(trade.optionDetails.expiration), 'MMM dd')}
                               </div>
                             )}
                           </div>
                         </TableCell>
+                        
                         <TableCell>
                           <Badge variant={trade.isOption ? 'secondary' : 'default'}>
                             {trade.isOption ? 'Option' : 'Stock'}
                           </Badge>
                         </TableCell>
+                        
                         <TableCell>
                           <Badge 
-                            variant={trade.action === 'BUY' ? 'default' : 'destructive'}
-                            className={trade.action === 'BUY' ? 'bg-green-100 text-green-800' : ''}
+                            className={getActionBadgeColor(trade.action)}
+                            variant="outline"
                           >
                             {trade.action}
                           </Badge>
                         </TableCell>
-                        <TableCell className="text-right">{trade.units}</TableCell>
+                        
+                        <TableCell className="text-right">{trade.quantity}</TableCell>
+                        
                         <TableCell className="text-right">
                           {formatCurrency(trade.price)}
                         </TableCell>
+                        
                         <TableCell className="text-right">
                           {formatCurrency(trade.totalValue)}
                         </TableCell>
+                        
                         <TableCell className="text-right">
                           {trade.realizedPnL !== undefined ? (
                             <div className={trade.realizedPnL >= 0 ? 'text-green-600' : 'text-red-600'}>
                               {formatCurrency(trade.realizedPnL)}
-                              {trade.entryPrice && (
+                              {trade.entryPrice && trade.exitPrice && (
                                 <div className="text-xs">
-                                  {formatPercent(((trade.exitPrice! - trade.entryPrice) / trade.entryPrice) * 100)}
+                                  {formatPercent(((trade.exitPrice - trade.entryPrice) / trade.entryPrice) * 100)}
                                 </div>
                               )}
                             </div>
@@ -413,6 +451,30 @@ export default function TradesJournalPage() {
                             <span className="text-muted-foreground">-</span>
                           )}
                         </TableCell>
+                        
+                        <TableCell>
+                          <div className="flex items-center gap-1">
+                            <Badge 
+                              variant="outline" 
+                              className={
+                                trade.status === 'closed' ? 'border-green-200 text-green-700' :
+                                trade.status === 'expired' ? 'border-orange-200 text-orange-700' :
+                                trade.status === 'assigned' ? 'border-purple-200 text-purple-700' :
+                                trade.status === 'exercised' ? 'border-blue-200 text-blue-700' :
+                                'border-gray-200 text-gray-700'
+                              }
+                            >
+                              {trade.status}
+                            </Badge>
+                            {trade.holdingPeriod && (
+                              <div className="text-xs text-muted-foreground flex items-center gap-1">
+                                <Timer className="h-3 w-3" />
+                                {trade.holdingPeriod}d
+                              </div>
+                            )}
+                          </div>
+                        </TableCell>
+                        
                         <TableCell>
                           {hasJournal ? (
                             <Badge variant="outline" className="gap-1">
@@ -436,7 +498,7 @@ export default function TradesJournalPage() {
         </CardContent>
       </Card>
 
-      {/* Journal Dialog */}
+      {/* Enhanced Journal Dialog */}
       <Dialog open={isJournalOpen} onOpenChange={setIsJournalOpen}>
         <DialogContent className="max-w-2xl">
           <DialogHeader>
@@ -444,7 +506,7 @@ export default function TradesJournalPage() {
           </DialogHeader>
           {selectedTrade && (
             <div className="space-y-4">
-              {/* Trade Summary */}
+              {/* Enhanced Trade Summary */}
               <Card>
                 <CardContent className="pt-6">
                   <div className="grid grid-cols-2 gap-4 text-sm">
@@ -460,26 +522,74 @@ export default function TradesJournalPage() {
                     </div>
                     <div>
                       <span className="text-muted-foreground">Action:</span>{' '}
-                      <Badge variant={selectedTrade.action === 'BUY' ? 'default' : 'destructive'}>
+                      <Badge className={getActionBadgeColor(selectedTrade.action)} variant="outline">
                         {selectedTrade.action}
                       </Badge>
                     </div>
                     <div>
                       <span className="text-muted-foreground">Quantity:</span>{' '}
-                      <span className="font-medium">{selectedTrade.units}</span>
+                      <span className="font-medium">{selectedTrade.quantity}</span>
                     </div>
                     <div>
                       <span className="text-muted-foreground">Price:</span>{' '}
                       <span className="font-medium">{formatCurrency(selectedTrade.price)}</span>
                     </div>
-                    {selectedTrade.realizedPnL !== undefined && (
-                      <div>
-                        <span className="text-muted-foreground">P&L:</span>{' '}
-                        <span className={`font-medium ${selectedTrade.realizedPnL >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                          {formatCurrency(selectedTrade.realizedPnL)}
-                        </span>
-                      </div>
+                    <div>
+                      <span className="text-muted-foreground">Type:</span>{' '}
+                      <Badge variant={selectedTrade.isOption ? 'secondary' : 'default'}>
+                        {selectedTrade.isOption ? 'Option' : 'Stock'}
+                      </Badge>
+                    </div>
+                    <div>
+                      <span className="text-muted-foreground">Status:</span>{' '}
+                      <Badge variant="outline">{selectedTrade.status}</Badge>
+                    </div>
+                    {selectedTrade.isOption && selectedTrade.optionDetails && (
+                      <>
+                        <div>
+                          <span className="text-muted-foreground">Strike:</span>{' '}
+                          <span className="font-medium">${selectedTrade.optionDetails.strike}</span>
+                        </div>
+                        <div>
+                          <span className="text-muted-foreground">Expiration:</span>{' '}
+                          <span className="font-medium">
+                            {format(new Date(selectedTrade.optionDetails.expiration), 'MMM dd, yyyy')}
+                          </span>
+                        </div>
+                      </>
                     )}
+                    {selectedTrade.realizedPnL !== undefined && (
+                      <>
+                        <div>
+                          <span className="text-muted-foreground">Entry:</span>{' '}
+                          <span className="font-medium">{formatCurrency(selectedTrade.entryPrice || 0)}</span>
+                        </div>
+                        <div>
+                          <span className="text-muted-foreground">Exit:</span>{' '}
+                          <span className="font-medium">{formatCurrency(selectedTrade.exitPrice || 0)}</span>
+                        </div>
+                        <div>
+                          <span className="text-muted-foreground">P&L:</span>{' '}
+                          <span className={`font-medium ${selectedTrade.realizedPnL >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                            {formatCurrency(selectedTrade.realizedPnL)}
+                          </span>
+                        </div>
+                        {selectedTrade.holdingPeriod && (
+                          <div>
+                            <span className="text-muted-foreground">Holding Period:</span>{' '}
+                            <span className="font-medium">{selectedTrade.holdingPeriod} days</span>
+                          </div>
+                        )}
+                      </>
+                    )}
+                    <div>
+                      <span className="text-muted-foreground">Commission:</span>{' '}
+                      <span className="font-medium">{formatCurrency(selectedTrade.commission)}</span>
+                    </div>
+                    <div>
+                      <span className="text-muted-foreground">Total Value:</span>{' '}
+                      <span className="font-medium">{formatCurrency(selectedTrade.totalValue)}</span>
+                    </div>
                   </div>
                 </CardContent>
               </Card>
@@ -492,7 +602,10 @@ export default function TradesJournalPage() {
                 </div>
               ) : aiPrompts.length > 0 && (
                 <div className="space-y-2">
-                  <p className="text-sm font-medium">Reflection prompts:</p>
+                  <p className="text-sm font-medium flex items-center gap-2">
+                    <Award className="h-4 w-4" />
+                    Reflection prompts:
+                  </p>
                   <div className="flex flex-wrap gap-2">
                     {aiPrompts.map((prompt, index) => (
                       <Button
@@ -500,6 +613,7 @@ export default function TradesJournalPage() {
                         variant="outline"
                         size="sm"
                         onClick={() => addPromptToNotes(prompt)}
+                        className="text-xs"
                       >
                         {prompt}
                       </Button>

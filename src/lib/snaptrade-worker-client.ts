@@ -39,11 +39,6 @@ class SnapTradeWorkerClient {
 
     const url = `${this.baseUrl}${endpoint}`;
     console.log(`Making request to: ${url}`);
-
-    console.log('Calling SnapTrade with:');
-    console.log('  clientId:', process.env.NEXT_PUBLIC_SNAPTRADE_CLIENT_ID);
-    console.log('  userId:', this.credentials.userId);
-    console.log('  userSecret:', this.credentials.userSecret);
     
     const headers: HeadersInit = {
       'Content-Type': 'application/json',
