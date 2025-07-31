@@ -119,7 +119,7 @@ const DashboardPage = () => {
                   </option>
                 ))}
             </select>
-            <Link href="/dashboard/portfolio">
+            <Link href="./advanced-analytics">
               <Button variant="outline"><BarChart3 className="mr-2 h-4 w-4" />Advanced Analytics</Button>
             </Link>
           </div>
