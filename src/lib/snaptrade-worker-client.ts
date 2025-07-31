@@ -19,8 +19,6 @@ class SnapTradeWorkerClient {
   }
 
   setCredentials(userId: string, userSecret: string) {
-    console.log('Setting credentials for user:', userId);
-    console.log('Setting userSecret:', userSecret);
     this.credentials = { userId, userSecret };
   }
 

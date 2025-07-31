@@ -260,6 +260,9 @@ const PositionsPage = () => {
   });
 
   const safePositions: Position[] = Array.isArray(positions) ? positions : [];
+  // Debug logging for raw and safe positions
+  console.log('Raw positions from query:', positions);
+  console.log('SafePositions (combined):', safePositions);
   const [filter, setFilter] = useState('');
   const [activeId, setActiveId] = useState<string | null>(null);
   const [activeType, setActiveType] = useState<'equity' | 'option' | null>(null);
@@ -291,6 +294,10 @@ const PositionsPage = () => {
     }
     const equities = filtered.filter(position => position?.symbol?.symbol);
     const options = filtered.filter(position => position?.symbol?.option_symbol);
+    // Debug logging for filtered/derived positions
+    console.log('Filtered positions:', filtered);
+    console.log('Derived equities:', equities);
+    console.log('Derived options:', options);
     return { equities, options };
   }, [safePositions, filter]);
 
