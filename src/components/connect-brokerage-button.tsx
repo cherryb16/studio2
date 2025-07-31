@@ -1,41 +1,66 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
-import { getSnapTradeLoginUrl } from "@/app/actions/snaptrade"; // Import the server action
+import { snaptradeWorker } from '@/lib/snaptrade-worker-client';
 import { Loader2 } from 'lucide-react';
-import { useAuth } from '@/hooks/use-auth'; // Import useAuth
+import { useAuth } from '@/hooks/use-auth';
 
 export function ConnectBrokerageButton() {
   const [loading, setLoading] = useState(false);
   const [disabled, setDisabled] = useState(false);
+  const [credentials, setCredentials] = useState<{snaptradeUserId: string; userSecret: string} | null>(null);
   const { toast } = useToast();
-  const { user } = useAuth(); // Get the user from useAuth
+  const { user } = useAuth();
+
+  // Fetch credentials when user changes
+  useEffect(() => {
+    const fetchCredentials = async () => {
+      if (!user) return;
+      
+      try {
+        const response = await fetch(`/api/firebase/getCredentials?firebaseUserId=${user.uid}`);
+        if (response.ok) {
+          const creds = await response.json();
+          setCredentials(creds);
+          if (creds.snaptradeUserId && creds.userSecret) {
+            snaptradeWorker.setCredentials(creds.snaptradeUserId, creds.userSecret);
+          }
+        }
+      } catch (error) {
+        console.error('Error fetching credentials:', error);
+      }
+    };
+
+    fetchCredentials();
+  }, [user]);
 
   const handleClick = async () => {
     setLoading(true);
     setDisabled(true);
-    if (!user) { // Add a check if user is null
+    
+    if (!user || !credentials) {
       toast({
         title: "Error",
-        description: "User not authenticated.",
+        description: "User not authenticated or credentials not found.",
         variant: "destructive",
       });
       setLoading(false);
       setDisabled(false);
       return;
     }
+    
     try {
-      // Call the server action with user.uid
-      const result = await getSnapTradeLoginUrl(user.uid);
+      // Use the worker client to get login URL
+      const result = await snaptradeWorker.getLoginUrl();
 
-      if (result.data?.redirectUrl) {
-        window.location.href = result.data.redirectUrl;
+      if (result.redirectURI) {
+        window.location.href = result.redirectURI;
       } else {
         toast({
           title: "Error",
-          description: result.error || "Failed to create SnapTrade connect link.",
+          description: "Failed to create SnapTrade connect link.",
           variant: "destructive",
         });
       }
@@ -52,7 +77,7 @@ export function ConnectBrokerageButton() {
   };
 
   return (
-    <Button onClick={handleClick} disabled={disabled || !user}>
+    <Button onClick={handleClick} disabled={disabled || !user || !credentials}>
       {loading && (
         <Loader2 className="mr-2 h-4 w-4 animate-spin" />
       )}
