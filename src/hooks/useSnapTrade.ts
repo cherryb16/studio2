@@ -2,6 +2,7 @@
 import { useState, useEffect } from 'react';
 import { auth } from '@/lib/firebase';
 import { User } from 'firebase/auth';
+import { snaptradeWorker } from '@/lib/snaptrade-worker-client';
 
 interface SnapTradeCredentials {
   snaptradeUserId: string;
@@ -15,45 +16,61 @@ interface UseSnapTradeResult<T> {
   refetch: () => void;
 }
 
-// Main hook for SnapTrade positions
-export const useSnapTradePositions = (): UseSnapTradeResult<any[]> => {
-  const [data, setData] = useState<any[] | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<Error | null>(null);
+// Hook for fetching credentials from API
+const useSnapTradeCredentials = () => {
   const [credentials, setCredentials] = useState<SnapTradeCredentials | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<Error | null>(null);
 
-  // Fetch credentials when user changes
   useEffect(() => {
     const unsubscribe = auth.onAuthStateChanged(async (user: User | null) => {
       if (user) {
         try {
-          const response = await fetch(`/api/snaptrade-credentials?firebaseUserId=${user.uid}`);
+          const response = await fetch(`/api/firebase/getCredentials?firebaseUserId=${user.uid}`);
           
           if (response.ok) {
             const creds = await response.json();
             setCredentials(creds);
+            // Set credentials in worker client
+            if (creds.snaptradeUserId && creds.userSecret) {
+              snaptradeWorker.setCredentials(creds.snaptradeUserId, creds.userSecret);
+            }
           } else {
             const { error } = await response.json();
             setError(new Error(`Failed to fetch credentials: ${error}`));
-            setIsLoading(false);
           }
         } catch (err: any) {
           setError(err);
-          setIsLoading(false);
         }
       } else {
         setCredentials(null);
-        setData(null);
-        setIsLoading(false);
       }
+      setLoading(false);
     });
 
     return () => unsubscribe();
   }, []);
 
-  // Fetch positions when credentials are available
+  return { credentials, loading, error };
+};
+
+// Main hook for SnapTrade positions using Worker
+export const useSnapTradePositions = (): UseSnapTradeResult<any[]> => {
+  const [data, setData] = useState<any[] | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<Error | null>(null);
+  const { credentials, loading: credLoading, error: credError } = useSnapTradeCredentials();
+
   useEffect(() => {
     const fetchPositions = async () => {
+      if (credLoading) return;
+      
+      if (credError) {
+        setError(credError);
+        setIsLoading(false);
+        return;
+      }
+
       if (!credentials) {
         setData(null);
         setIsLoading(false);
@@ -62,20 +79,9 @@ export const useSnapTradePositions = (): UseSnapTradeResult<any[]> => {
 
       setIsLoading(true);
       try {
-        // Use your existing server action
-        const { getAllPositions } = await import('@/app/actions/snaptrade');
-        const result = await getAllPositions(credentials.snaptradeUserId, credentials.userSecret);
-
-        if (result && 'error' in result) {
-          setError(new Error(result.error));
-          setData(null);
-        } else if (result) {
-          setData(result as any[]);
-          setError(null);
-        } else {
-          setData([]);
-          setError(null);
-        }
+        const result = await snaptradeWorker.getPositions();
+        setData(result);
+        setError(null);
       } catch (err: any) {
         setError(err);
         setData(null);
@@ -85,54 +91,44 @@ export const useSnapTradePositions = (): UseSnapTradeResult<any[]> => {
     };
 
     fetchPositions();
-  }, [credentials]);
+  }, [credentials, credLoading, credError]);
 
-  const refetch = () => {
-    if (credentials) {
-      // Trigger re-fetch by updating credentials
-      setCredentials({ ...credentials });
+  const refetch = async () => {
+    if (!credentials) return;
+    
+    setIsLoading(true);
+    try {
+      const result = await snaptradeWorker.getPositions();
+      setData(result);
+      setError(null);
+    } catch (err: any) {
+      setError(err);
+      setData(null);
+    } finally {
+      setIsLoading(false);
     }
   };
 
   return { data, isLoading, error, refetch };
 };
 
-// Hook for SnapTrade accounts
+// Hook for SnapTrade accounts using Worker
 export const useSnapTradeAccounts = (): UseSnapTradeResult<any[]> => {
   const [data, setData] = useState<any[] | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
-  const [credentials, setCredentials] = useState<SnapTradeCredentials | null>(null);
-
-  useEffect(() => {
-    const unsubscribe = auth.onAuthStateChanged(async (user: User | null) => {
-      if (user) {
-        try {
-          const response = await fetch(`/api/snaptrade-credentials?firebaseUserId=${user.uid}`);
-          
-          if (response.ok) {
-            const creds = await response.json();
-            setCredentials(creds);
-          } else {
-            setError(new Error('Failed to fetch credentials'));
-            setIsLoading(false);
-          }
-        } catch (err: any) {
-          setError(err);
-          setIsLoading(false);
-        }
-      } else {
-        setCredentials(null);
-        setData(null);
-        setIsLoading(false);
-      }
-    });
-
-    return () => unsubscribe();
-  }, []);
+  const { credentials, loading: credLoading, error: credError } = useSnapTradeCredentials();
 
   useEffect(() => {
     const fetchAccounts = async () => {
+      if (credLoading) return;
+      
+      if (credError) {
+        setError(credError);
+        setIsLoading(false);
+        return;
+      }
+
       if (!credentials) {
         setData(null);
         setIsLoading(false);
@@ -141,16 +137,9 @@ export const useSnapTradeAccounts = (): UseSnapTradeResult<any[]> => {
 
       setIsLoading(true);
       try {
-        const { getSnapTradeAccounts } = await import('@/app/actions/snaptrade');
-        const result = await getSnapTradeAccounts(credentials.snaptradeUserId, credentials.userSecret);
-
-        if (result && 'error' in result) {
-          setError(new Error(result.error));
-          setData(null);
-        } else if (result) {
-          setData(result as any[]);
-          setError(null);
-        }
+        const result = await snaptradeWorker.getAccounts();
+        setData(result);
+        setError(null);
       } catch (err: any) {
         setError(err);
         setData(null);
@@ -160,53 +149,44 @@ export const useSnapTradeAccounts = (): UseSnapTradeResult<any[]> => {
     };
 
     fetchAccounts();
-  }, [credentials]);
+  }, [credentials, credLoading, credError]);
 
-  const refetch = () => {
-    if (credentials) {
-      setCredentials({ ...credentials });
+  const refetch = async () => {
+    if (!credentials) return;
+    
+    setIsLoading(true);
+    try {
+      const result = await snaptradeWorker.getAccounts();
+      setData(result);
+      setError(null);
+    } catch (err: any) {
+      setError(err);
+      setData(null);
+    } finally {
+      setIsLoading(false);
     }
   };
 
   return { data, isLoading, error, refetch };
 };
 
-// Hook for portfolio analytics
-export const usePortfolioAnalytics = (): UseSnapTradeResult<any> => {
+// Hook for portfolio analytics using Worker
+export const usePortfolioAnalytics = (accountId?: string): UseSnapTradeResult<any> => {
   const [data, setData] = useState<any | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
-  const [credentials, setCredentials] = useState<SnapTradeCredentials | null>(null);
-
-  useEffect(() => {
-    const unsubscribe = auth.onAuthStateChanged(async (user: User | null) => {
-      if (user) {
-        try {
-          const response = await fetch(`/api/snaptrade-credentials?firebaseUserId=${user.uid}`);
-          
-          if (response.ok) {
-            const creds = await response.json();
-            setCredentials(creds);
-          } else {
-            setError(new Error('Failed to fetch credentials'));
-            setIsLoading(false);
-          }
-        } catch (err: any) {
-          setError(err);
-          setIsLoading(false);
-        }
-      } else {
-        setCredentials(null);
-        setData(null);
-        setIsLoading(false);
-      }
-    });
-
-    return () => unsubscribe();
-  }, []);
+  const { credentials, loading: credLoading, error: credError } = useSnapTradeCredentials();
 
   useEffect(() => {
     const fetchAnalytics = async () => {
+      if (credLoading) return;
+      
+      if (credError) {
+        setError(credError);
+        setIsLoading(false);
+        return;
+      }
+
       if (!credentials) {
         setData(null);
         setIsLoading(false);
@@ -215,16 +195,9 @@ export const usePortfolioAnalytics = (): UseSnapTradeResult<any> => {
 
       setIsLoading(true);
       try {
-        const { getPortfolioAnalytics } = await import('@/app/actions/snaptrade-enhanced');
-        const result = await getPortfolioAnalytics(credentials.snaptradeUserId, credentials.userSecret);
-
-        if (result && 'error' in result) {
-          setError(new Error(result.error));
-          setData(null);
-        } else if (result) {
-          setData(result);
-          setError(null);
-        }
+        const result = await snaptradeWorker.getAnalytics(accountId);
+        setData(result);
+        setError(null);
       } catch (err: any) {
         setError(err);
         setData(null);
@@ -234,11 +207,137 @@ export const usePortfolioAnalytics = (): UseSnapTradeResult<any> => {
     };
 
     fetchAnalytics();
-  }, [credentials]);
+  }, [credentials, credLoading, credError, accountId]);
 
-  const refetch = () => {
-    if (credentials) {
-      setCredentials({ ...credentials });
+  const refetch = async () => {
+    if (!credentials) return;
+    
+    setIsLoading(true);
+    try {
+      const result = await snaptradeWorker.getAnalytics(accountId);
+      setData(result);
+      setError(null);
+    } catch (err: any) {
+      setError(err);
+      setData(null);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  return { data, isLoading, error, refetch };
+};
+
+// Hook for holdings using Worker
+export const useSnapTradeHoldings = (accountId?: string): UseSnapTradeResult<any> => {
+  const [data, setData] = useState<any | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<Error | null>(null);
+  const { credentials, loading: credLoading, error: credError } = useSnapTradeCredentials();
+
+  useEffect(() => {
+    const fetchHoldings = async () => {
+      if (credLoading) return;
+      
+      if (credError) {
+        setError(credError);
+        setIsLoading(false);
+        return;
+      }
+
+      if (!credentials) {
+        setData(null);
+        setIsLoading(false);
+        return;
+      }
+
+      setIsLoading(true);
+      try {
+        const result = await snaptradeWorker.getHoldings(accountId);
+        setData(result);
+        setError(null);
+      } catch (err: any) {
+        setError(err);
+        setData(null);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    fetchHoldings();
+  }, [credentials, credLoading, credError, accountId]);
+
+  const refetch = async () => {
+    if (!credentials) return;
+    
+    setIsLoading(true);
+    try {
+      const result = await snaptradeWorker.getHoldings(accountId);
+      setData(result);
+      setError(null);
+    } catch (err: any) {
+      setError(err);
+      setData(null);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  return { data, isLoading, error, refetch };
+};
+
+// Hook for balances using Worker
+export const useSnapTradeBalances = (accountId?: string): UseSnapTradeResult<any[]> => {
+  const [data, setData] = useState<any[] | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<Error | null>(null);
+  const { credentials, loading: credLoading, error: credError } = useSnapTradeCredentials();
+
+  useEffect(() => {
+    const fetchBalances = async () => {
+      if (credLoading) return;
+      
+      if (credError) {
+        setError(credError);
+        setIsLoading(false);
+        return;
+      }
+
+      if (!credentials) {
+        setData(null);
+        setIsLoading(false);
+        return;
+      }
+
+      setIsLoading(true);
+      try {
+        const result = await snaptradeWorker.getBalances(accountId);
+        setData(result);
+        setError(null);
+      } catch (err: any) {
+        setError(err);
+        setData(null);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    fetchBalances();
+  }, [credentials, credLoading, credError, accountId]);
+
+  const refetch = async () => {
+    if (!credentials) return;
+    
+    setIsLoading(true);
+    try {
+      const result = await snaptradeWorker.getBalances(accountId);
+      setData(result);
+      setError(null);
+    } catch (err: any) {
+      setError(err);
+      setData(null);
+    } finally {
+      setIsLoading(false);
     }
   };
 

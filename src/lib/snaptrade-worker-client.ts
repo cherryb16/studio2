@@ -1,0 +1,95 @@
+// src/lib/snaptrade-worker-client.ts
+'use client';
+
+interface WorkerResponse<T> {
+  data?: T;
+  error?: string;
+}
+
+class SnapTradeWorkerClient {
+  private baseUrl: string;
+  private credentials: { userId: string; userSecret: string } | null = null;
+
+  constructor() {
+    this.baseUrl = process.env.NEXT_PUBLIC_SNAPTRADE_WORKER_URL || '';
+    if (!this.baseUrl) {
+      console.error('NEXT_PUBLIC_SNAPTRADE_WORKER_URL is not set');
+    }
+  }
+
+  setCredentials(userId: string, userSecret: string) {
+    this.credentials = { userId, userSecret };
+  }
+
+  private async makeRequest<T>(
+    endpoint: string,
+    method: string = 'GET',
+    body?: any
+  ): Promise<T> {
+    if (!this.credentials) {
+      throw new Error('No credentials set. Call setCredentials first.');
+    }
+
+    const url = `${this.baseUrl}${endpoint}`;
+    const headers: HeadersInit = {
+      'Content-Type': 'application/json',
+      'X-User-ID': this.credentials.userId,
+      'X-User-Secret': this.credentials.userSecret,
+    };
+
+    try {
+      const response = await fetch(url, {
+        method,
+        headers,
+        body: body ? JSON.stringify(body) : undefined,
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || `Request failed with status ${response.status}`);
+      }
+
+      return data;
+    } catch (error) {
+      console.error(`Error calling ${endpoint}:`, error);
+      throw error;
+    }
+  }
+
+  // API Methods
+  async getAccounts() {
+    return this.makeRequest<any[]>('/accounts');
+  }
+
+  async getPositions(accountId?: string) {
+    const params = accountId ? `?accountId=${accountId}` : '';
+    return this.makeRequest<any[]>(`/positions${params}`);
+  }
+
+  async getBalances(accountId?: string) {
+    const params = accountId ? `?accountId=${accountId}` : '';
+    return this.makeRequest<any[]>(`/balances${params}`);
+  }
+
+  async getHoldings(accountId?: string) {
+    const params = accountId ? `?accountId=${accountId}` : '';
+    return this.makeRequest<any>(`/holdings${params}`);
+  }
+
+  async getAnalytics(accountId?: string) {
+    const params = accountId ? `?accountId=${accountId}` : '';
+    return this.makeRequest<any>(`/analytics${params}`);
+  }
+
+  async getLoginUrl() {
+    return this.makeRequest<{ redirectURI: string }>('/login-url', 'POST');
+  }
+
+  async checkHealth() {
+    return this.makeRequest<{ status: string; timestamp: string }>('/health');
+  }
+}
+
+// Export singleton instance
+export const snaptradeWorker = new SnapTradeWorkerClient();
