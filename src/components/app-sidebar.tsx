@@ -12,22 +12,15 @@ const mainNav = [
   {
     href: '/dashboard',
     title: 'Dashboard',
-    icon: 'layout-dashboard',
   },
   {
-    href: '/trades',
-    title: 'Trades',
-    icon: 'line-chart',
+    href: '/trade-journal',
+    title: 'Trade Journal',
   },
-  {
-    href: '/journal',
-    title: 'Journal',
-    icon: 'book',
-  },
+
   {
     href: '/positions',
     title: 'Positions',
-    icon: 'package',
   },
 ];
 
@@ -83,11 +76,6 @@ export default function AppSidebar({ user }: AppSidebarProps) { // Accept the us
                                     strokeLinejoin="round"
                                     className="h-4 w-4"
                                 >
-                                     {/* Icon paths go here based on item.icon */}
-                                     {item.icon === 'layout-dashboard' && <path d="M3 3h18v18H3zM9 3v18M9 3a6 6 0 0 0 6 6M9 21a6 6 0 0 0 6-6"></path>}
-                                     {item.icon === 'line-chart' && <path d="M3 3h18v18H3zM9 3v18M9 3a6 6 0 0 0 6 6M9 21a6 6 0 0 0 6-6"></path>}
-                                     {item.icon === 'book' && <path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20"></path>}
-                                     {item.icon === 'package' && <path d="M3 3h18v18H3zM9 3v18M9 3a6 6 0 0 0 6 6M9 21a6 6 0 0 0 6-6"></path>}
                                 </svg>
                                 {item.title}
                             </Link>
@@ -96,10 +84,6 @@ export default function AppSidebar({ user }: AppSidebarProps) { // Accept the us
                 </div>
                 <div className="mt-auto p-4">
                     <ConnectBrokerageButton />
-                     <div className="pt-4">
-                         {/* Pass the user prop to UserNav */}
-                         <UserNav user={user} />
-                    </div>
                 </div>
             </div>
         </div>
