@@ -49,7 +49,7 @@ import {
   Target
 } from 'lucide-react';
 import { format } from 'date-fns';
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart as RechartsPieChart, Cell } from 'recharts';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart as RechartsPieChart, Cell, Pie } from 'recharts';
 
 const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884D8', '#82CA9D'];
 
@@ -297,28 +297,32 @@ export default function AdvancedAnalyticsPage() {
         </div>
       )}
 
-      {/* Period Selector */}
-      <div className="flex gap-2">
-        {(['day', 'week', 'month', 'year', 'all'] as const).map((period) => (
-          <Button
-            key={period}
-            variant={selectedPeriod === period ? 'default' : 'outline'}
-            size="sm"
-            onClick={() => setSelectedPeriod(period)}
-          >
-            {period.charAt(0).toUpperCase() + period.slice(1)}
-          </Button>
-        ))}
+      {/* Combined Period Selector and Tabs */}
+      <div className="flex flex-wrap gap-4 justify-between items-end">
+        <div className="flex gap-2">
+          {(['day', 'week', 'month', 'year', 'all'] as const).map((period) => (
+            <Button
+              key={period}
+              variant={selectedPeriod === period ? 'default' : 'outline'}
+              size="sm"
+              onClick={() => setSelectedPeriod(period)}
+            >
+              {period.charAt(0).toUpperCase() + period.slice(1)}
+            </Button>
+          ))}
+        </div>
+        <Tabs value={activeTab} onValueChange={setActiveTab}>
+          <TabsList className="flex gap-2">
+            <TabsTrigger value="overview">Overview</TabsTrigger>
+            <TabsTrigger value="dividends">Dividends</TabsTrigger>
+            <TabsTrigger value="cashflow">Cash Flow</TabsTrigger>
+            <TabsTrigger value="activity">All Activity</TabsTrigger>
+          </TabsList>
+        </Tabs>
       </div>
 
       {/* Tabs for different views */}
       <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList className="grid grid-cols-4">
-          <TabsTrigger value="overview">Overview</TabsTrigger>
-          <TabsTrigger value="dividends">Dividends</TabsTrigger>
-          <TabsTrigger value="cashflow">Cash Flow</TabsTrigger>
-          <TabsTrigger value="activity">All Activity</TabsTrigger>
-        </TabsList>
 
         {/* Overview Tab */}
         <TabsContent value="overview" className="space-y-6">
@@ -361,7 +365,7 @@ export default function AdvancedAnalyticsPage() {
                         cx="50%"
                         cy="50%"
                         labelLine={false}
-                        label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
+                        label={({ name, percent }: { name: string; percent: number }) => `${name} ${(percent * 100).toFixed(0)}%`}
                         outerRadius={80}
                         fill="#8884d8"
                         dataKey="value"
