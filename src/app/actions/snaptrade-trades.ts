@@ -280,9 +280,10 @@ function parseOptionDetails(optionSymbol: string): EnhancedTrade['optionDetails'
   };
 }
 
-// Parse option symbol for display
 function parseOptionSymbol(optionSymbol: string): string {
   const details = parseOptionDetails(optionSymbol);
+  if (!details) return optionSymbol;
+
   return `${details.underlying} ${details.strike} ${details.type} ${details.expiration}`;
 }
 
