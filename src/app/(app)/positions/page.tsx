@@ -45,7 +45,9 @@ import {
   useSortable,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { useSnapTradePositions } from '../../../hooks/useSnapTrade';
+import { useQuery } from '@tanstack/react-query';
+import { useAuth } from '@/hooks/use-auth';
+import { getSnapTradePositions } from '@/app/actions/snaptrade';
 
 // Equity column types
 type EquityCol =
@@ -232,8 +234,31 @@ const PositionsPage = () => {
     })
   );
 
-  // SnapTrade hook for real data
-  const { data: positions, isLoading, error } = useSnapTradePositions();
+  // Auth and SnapTrade credentials logic
+  const { user, loading: authLoading } = useAuth();
+  const firebaseUserId = user?.uid;
+
+  const { data: snaptradeCredentials, isLoading: credentialsLoading } = useQuery({
+    queryKey: ['snaptradeCredentials', firebaseUserId],
+    queryFn: async () => {
+      if (!firebaseUserId) throw new Error('Missing Firebase user ID');
+      const res = await fetch(`/api/firebase/getCredentials?firebaseUserId=${firebaseUserId}`);
+      if (!res.ok) throw new Error('Failed to fetch credentials');
+      return res.json();
+    },
+    enabled: !!firebaseUserId,
+  });
+
+  const snaptradeUserId = snaptradeCredentials?.snaptradeUserId;
+  const userSecret = snaptradeCredentials?.userSecret;
+  const enabled = !!snaptradeUserId && !!userSecret;
+
+  const { data: positions, isLoading, error } = useQuery({
+    queryKey: ['positions', snaptradeUserId, userSecret],
+    queryFn: () => getSnapTradePositions(snaptradeUserId!, userSecret!),
+    enabled,
+  });
+
   const safePositions: Position[] = Array.isArray(positions) ? positions : [];
   const [filter, setFilter] = useState('');
   const [activeId, setActiveId] = useState<string | null>(null);
