@@ -26,24 +26,37 @@ const useSnapTradeCredentials = () => {
     const unsubscribe = auth.onAuthStateChanged(async (user: User | null) => {
       if (user) {
         try {
+          console.log('Fetching credentials for user:', user.uid);
           const response = await fetch(`/api/firebase/getCredentials?firebaseUserId=${user.uid}`);
           
           if (response.ok) {
             const creds = await response.json();
-            setCredentials(creds);
-            // Set credentials in worker client
+            console.log('Credentials fetched successfully:', { 
+              hasUserId: !!creds.snaptradeUserId, 
+              hasSecret: !!creds.userSecret 
+            });
+            
             if (creds.snaptradeUserId && creds.userSecret) {
+              setCredentials(creds);
+              // Set credentials in worker client
               snaptradeWorker.setCredentials(creds.snaptradeUserId, creds.userSecret);
+            } else {
+              console.error('Credentials response missing required fields');
+              setError(new Error('Invalid credentials format'));
             }
           } else {
-            const { error } = await response.json();
-            setError(new Error(`Failed to fetch credentials: ${error}`));
+            const errorData = await response.json();
+            console.error('Failed to fetch credentials:', errorData);
+            setError(new Error(`Failed to fetch credentials: ${errorData.error || response.statusText}`));
           }
         } catch (err: any) {
+          console.error('Error in credential fetch:', err);
           setError(err);
         }
       } else {
+        console.log('No authenticated user');
         setCredentials(null);
+        setError(null);
       }
       setLoading(false);
     });
@@ -63,26 +76,34 @@ export const useSnapTradePositions = (): UseSnapTradeResult<any[]> => {
 
   useEffect(() => {
     const fetchPositions = async () => {
-      if (credLoading) return;
+      if (credLoading) {
+        console.log('Waiting for credentials to load...');
+        return;
+      }
       
       if (credError) {
+        console.error('Credential error:', credError);
         setError(credError);
         setIsLoading(false);
         return;
       }
 
       if (!credentials) {
+        console.log('No credentials available');
         setData(null);
         setIsLoading(false);
         return;
       }
 
+      console.log('Fetching positions with credentials');
       setIsLoading(true);
       try {
         const result = await snaptradeWorker.getPositions();
+        console.log('Positions fetched successfully:', Array.isArray(result) ? result.length : 'Not an array');
         setData(result);
         setError(null);
       } catch (err: any) {
+        console.error('Error fetching positions:', err);
         setError(err);
         setData(null);
       } finally {
@@ -94,14 +115,19 @@ export const useSnapTradePositions = (): UseSnapTradeResult<any[]> => {
   }, [credentials, credLoading, credError]);
 
   const refetch = async () => {
-    if (!credentials) return;
+    if (!credentials) {
+      console.log('Cannot refetch without credentials');
+      return;
+    }
     
+    console.log('Refetching positions...');
     setIsLoading(true);
     try {
       const result = await snaptradeWorker.getPositions();
       setData(result);
       setError(null);
     } catch (err: any) {
+      console.error('Error refetching positions:', err);
       setError(err);
       setData(null);
     } finally {
