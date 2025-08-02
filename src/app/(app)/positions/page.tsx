@@ -47,7 +47,7 @@ import {
 import { CSS } from '@dnd-kit/utilities';
 import { useQuery } from '@tanstack/react-query';
 import { useAuth } from '@/hooks/use-auth';
-import { getSnapTradePositions } from '@/app/actions/snaptrade';
+import { getUserHoldings } from '@/app/actions/snaptrade';
 
 // Equity column types
 type EquityCol =
@@ -253,16 +253,18 @@ const PositionsPage = () => {
   const userSecret = snaptradeCredentials?.userSecret;
   const enabled = !!snaptradeUserId && !!userSecret;
 
-  const { data: positions, isLoading, error } = useQuery({
-    queryKey: ['positions', snaptradeUserId, userSecret],
-    queryFn: () => getSnapTradePositions(snaptradeUserId!, userSecret!),
+  const { data: holdingsData, isLoading, error } = useQuery({
+    queryKey: ['holdings', snaptradeUserId, userSecret],
+    queryFn: () => getUserHoldings(snaptradeUserId!, userSecret!),
     enabled,
   });
 
-  const safePositions: Position[] = Array.isArray(positions) ? positions : [];
+  const safePositions: Position[] = Array.isArray(holdingsData?.positions) ? holdingsData.positions : [];
+  const safeOptionPositions = Array.isArray(holdingsData?.option_positions) ? holdingsData.option_positions : [];
   // Debug logging for raw and safe positions
-  console.log('Raw positions from query:', positions);
-  console.log('SafePositions (combined):', safePositions);
+  console.log('Raw holdings from query:', holdingsData);
+  console.log('SafePositions (equity):', safePositions);
+  console.log('SafeOptionPositions:', safeOptionPositions);
   const [filter, setFilter] = useState('');
   const [activeId, setActiveId] = useState<string | null>(null);
   const [activeType, setActiveType] = useState<'equity' | 'option' | null>(null);
@@ -281,29 +283,33 @@ const PositionsPage = () => {
     'Underlying', 'Strike', 'Type', 'Expiration', 'Quantity', 'Price', 'Purchase Price', 'Value', 'Unrealized P/L', 'P/L %'
   ]);
 
-  const { equities, options }: { equities: Position[]; options: Position[] } = useMemo(() => {
-    let filtered = safePositions;
+  const { equities, options }: { equities: Position[]; options: any[] } = useMemo(() => {
+    let filteredEquities = safePositions;
+    let filteredOptions = safeOptionPositions;
+    
     if (filter) {
-      filtered = filtered.filter(position => {
+      filteredEquities = filteredEquities.filter(position => {
         const equitySymbol = position?.symbol?.symbol?.toLowerCase();
-        const optionSymbol = position?.symbol?.option_symbol;
+        return equitySymbol?.includes(filter.toLowerCase());
+      });
+      
+      filteredOptions = filteredOptions.filter(option => {
+        const optionSymbol = option?.symbol?.option_symbol;
         const optionString = optionSymbol?.underlying_symbol?.symbol ?
           `${optionSymbol.underlying_symbol.symbol} ${optionSymbol.strike_price || ''} ${optionSymbol.option_type || ''} ${optionSymbol.expiration_date || ''}`.toLowerCase() : '';
-        return equitySymbol?.includes(filter.toLowerCase()) || optionString.includes(filter.toLowerCase());
+        return optionString.includes(filter.toLowerCase());
       });
     }
-    const equities = filtered.filter(position => position?.symbol?.symbol);
-    const options = filtered.filter(position => position?.symbol?.option_symbol);
+    
     // Debug logging for filtered/derived positions
-    console.log('Filtered positions:', filtered);
-    console.log('Derived equities:', equities);
-    console.log('Derived options:', options);
-    return { equities, options };
-  }, [safePositions, filter]);
+    console.log('Filtered equities:', filteredEquities);
+    console.log('Filtered options:', filteredOptions);
+    return { equities: filteredEquities, options: filteredOptions };
+  }, [safePositions, safeOptionPositions, filter]);
 
   if (isLoading) return <div>Loading...</div>;
-  if (error) return <p>Error loading positions: {String(error)}</p>;
-  if (!Array.isArray(positions)) return <p>Unexpected data format.</p>;
+  if (error) return <p>Error loading holdings: {String(error)}</p>;
+  if (holdingsData && 'error' in holdingsData) return <p>Error: {holdingsData.error}</p>;
 
   const toggleEquityColumn = (col: EquityCol) => {
     setVisibleEquityColumns(prev =>
@@ -441,7 +447,7 @@ const PositionsPage = () => {
   };
 
   // Table for options
-  const renderOptionsTable = (data: Position[] | undefined) => {
+  const renderOptionsTable = (data: any[] | undefined) => {
     if (!data || !Array.isArray(data) || data.length === 0) {
       return <p className="text-gray-500 p-4">No options available.</p>;
     }
@@ -458,13 +464,13 @@ const PositionsPage = () => {
             </tr>
           </thead>
           <tbody>
-            {data.map((position, index) => {
-              if (!position) return null;
-              const option = position.symbol?.option_symbol;
-              const underlying = option?.underlying_symbol?.symbol || '-';
-              const strike = option?.strike_price !== undefined ? option.strike_price : '-';
-              const type = option?.option_type || '-';
-              const expiration = option?.expiration_date || '-';
+            {data.map((option, index) => {
+              if (!option) return null;
+              const optionSymbol = option.symbol?.option_symbol;
+              const underlying = optionSymbol?.underlying_symbol?.symbol || '-';
+              const strike = optionSymbol?.strike_price !== undefined ? optionSymbol.strike_price : '-';
+              const type = optionSymbol?.option_type || '-';
+              const expiration = optionSymbol?.expiration_date || '-';
               return (
                 <tr key={index} className="border-b border-gray-100 dark:border-zinc-800 hover:bg-gray-50 dark:hover:bg-zinc-800/50">
                   {visibleOptionColumns.map((col) => (
@@ -473,31 +479,31 @@ const PositionsPage = () => {
                       {col === 'Strike' && String(strike)}
                       {col === 'Type' && String(type)}
                       {col === 'Expiration' && String(expiration)}
-                      {col === 'Quantity' && String(position.units || '-')}
+                      {col === 'Quantity' && String(option.units || '-')}
                       {col === 'Price' &&
                         (
-                          (position.price || 0) < 0
-                            ? `-$${Math.abs(position.price || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-                            : `$${(position.price || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                          (option.price || 0) < 0
+                            ? `-$${Math.abs(option.price || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                            : `$${(option.price || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
                         )}
                       {col === 'Purchase Price' &&
                         (
-                          (position.average_purchase_price || 0) < 0
-                            ? `-$${Math.abs(position.average_purchase_price || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-                            : `$${(position.average_purchase_price || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                          (option.average_purchase_price || 0) < 0
+                            ? `-$${Math.abs(option.average_purchase_price || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                            : `$${(option.average_purchase_price || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
                         )}
                       {col === 'Value' &&
                         (
-                          ((position.units || 0) * (position.price || 0) * 100) < 0
-                            ? `-$${Math.abs((position.units || 0) * (position.price || 0) * 100).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-                            : `$${((position.units || 0) * (position.price || 0) * 100).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                          ((option.units || 0) * (option.price || 0) * 100) < 0
+                            ? `-$${Math.abs((option.units || 0) * (option.price || 0) * 100).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                            : `$${((option.units || 0) * (option.price || 0) * 100).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
                         )}
                       {col === 'Unrealized P/L' && (
                         (() => {
-                          const units = position.units || 0;
-                          const price = position.price || 0;
+                          const units = option.units || 0;
+                          const price = option.price || 0;
                           const currentValue = units * price * 100;
-                          const costBasis = units * (position.average_purchase_price || 0);
+                          const costBasis = units * (option.average_purchase_price || 0);
                           const pnl = currentValue - costBasis;
                           return pnl < 0
                             ? `-$${Math.abs(pnl).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
@@ -505,14 +511,14 @@ const PositionsPage = () => {
                         })()
                       )}
                       {col === 'P/L %' && (
-                        position.average_purchase_price
+                        option.average_purchase_price
                           ? (() => {
-                              const units = position.units || 0;
-                              const price = position.price || 0;
+                              const units = option.units || 0;
+                              const price = option.price || 0;
                               // current market value per contract
                               const currentValue = units * price * 100;
                               // purchase price already multiplied by 100
-                              const costBasis = units * (position.average_purchase_price || 0);
+                              const costBasis = units * (option.average_purchase_price || 0);
                               const pnlPercent = costBasis !== 0 
                                 ? ((currentValue - costBasis) / Math.abs(costBasis) * 100)
                                 : 0;
@@ -573,8 +579,11 @@ const PositionsPage = () => {
               <ArrowIcon expanded={optionsExpanded} />
               <span>
                 Options (Total: ${
-                  calculateOptionsBalance(toOptionPositions(options))
-                    .toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+                  options.reduce((total, option) => {
+                    const units = option.units || 0;
+                    const price = option.price || 0;
+                    return total + Math.abs(units * price * 100);
+                  }, 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
                 })
               </span>
             </button>
