@@ -364,75 +364,122 @@ export async function getEnhancedTrades(
           openPositions: openForIdentifier.length
         });
         
-        if (['SELL', 'OPTIONEXPIRATION', 'OPTIONASSIGNMENT', 'OPTIONEXERCISE'].includes(trade.type) && openForIdentifier.length > 0) {
-          // This is a closing trade
-          let remainingUnits = Math.abs(trade.units || trade.quantity || 0);
-          const closedPositions: Array<{ entry: SnapTradeTrade; units: number }> = [];
+        if (['SELL', 'OPTIONEXPIRATION', 'OPTIONASSIGNMENT', 'OPTIONEXERCISE'].includes(trade.type)) {
+          // For SELL trades (including option expiration), check if we have open positions to close
+          if (openForIdentifier.length > 0) {
+            // This is a closing trade - we have open positions to match against
+            let remainingUnits = Math.abs(trade.units || trade.quantity || 0);
+            const closedPositions: Array<{ entry: SnapTradeTrade; units: number }> = [];
 
-          // FIFO matching
-          while (remainingUnits > 0 && openForIdentifier.length > 0) {
-            const openPos = openForIdentifier[0];
-            const unitsToClose = Math.min(remainingUnits, openPos.remainingUnits);
-            
-            closedPositions.push({
-              entry: openPos.trade,
-              units: unitsToClose,
-            });
+            // FIFO matching
+            while (remainingUnits > 0 && openForIdentifier.length > 0) {
+              const openPos = openForIdentifier[0];
+              const unitsToClose = Math.min(remainingUnits, openPos.remainingUnits);
+              
+              closedPositions.push({
+                entry: openPos.trade,
+                units: unitsToClose,
+              });
 
-            openPos.remainingUnits -= unitsToClose;
-            remainingUnits -= unitsToClose;
+              openPos.remainingUnits -= unitsToClose;
+              remainingUnits -= unitsToClose;
 
-            // Update the enhanced trade status based on remaining units
-            if (openPos.remainingUnits === 0) {
-              // Fully closed - mark as closed
-              openPos.enhancedTrade.status = 'closed';
-              openPos.enhancedTrade.position = 'close';
-              openForIdentifier.shift();
-            } else {
-              // Partially closed - mark as partial
-              openPos.enhancedTrade.status = 'partial';
+              // Update the enhanced trade status based on remaining units
+              if (openPos.remainingUnits === 0) {
+                // Fully closed - mark as closed
+                openPos.enhancedTrade.status = 'closed';
+                openPos.enhancedTrade.position = 'close';
+                openForIdentifier.shift();
+              } else {
+                // Partially closed - mark as partial
+                openPos.enhancedTrade.status = 'partial';
+              }
             }
-          }
 
-          // Calculate realized P&L
-          console.log(`Calculating P&L for ${identifier}, closed ${closedPositions.length} positions`);
-          let totalCostBasis = 0;
-          let totalUnits = 0;
-          let totalEntryFees = 0;
+            // Calculate realized P&L
+            console.log(`Calculating P&L for ${identifier}, closed ${closedPositions.length} positions`);
+            let totalCostBasis = 0;
+            let totalUnits = 0;
+            let totalEntryFees = 0;
 
-          for (const closed of closedPositions) {
-            const multiplier = isOption ? 100 : 1; // Options represent 100 shares
-            totalCostBasis += (closed.entry.price || 0) * closed.units * multiplier;
-            totalUnits += closed.units;
-            totalEntryFees += (closed.entry.fee || 0) * (closed.units / (closed.entry.units || closed.entry.quantity || 1));
-          }
+            for (const closed of closedPositions) {
+              const multiplier = isOption ? 100 : 1; // Options represent 100 shares
+              totalCostBasis += (closed.entry.price || 0) * closed.units * multiplier;
+              totalUnits += closed.units;
+              totalEntryFees += (closed.entry.fee || 0) * (closed.units / (closed.entry.units || closed.entry.quantity || 1));
+            }
 
-          const avgEntryPrice = totalUnits > 0 ? totalCostBasis / (totalUnits * (isOption ? 100 : 1)) : 0;
-          const multiplier = isOption ? 100 : 1;
-          const grossPnL = ((trade.price || 0) - avgEntryPrice) * totalUnits * multiplier;
-          const realizedPnL = grossPnL - totalEntryFees - (trade.fee || 0);
-          
-          console.log(`P&L Results for ${identifier}:`, {
-            avgEntryPrice,
-            exitPrice: trade.price,
-            totalUnits,
-            multiplier,
-            grossPnL,
-            totalEntryFees,
-            exitFee: trade.fee,
-            realizedPnL
-          });
-          
-          baseTrade.position = 'close';
-          baseTrade.entryPrice = avgEntryPrice;
-          baseTrade.exitPrice = trade.price || 0;
-          baseTrade.realizedPnL = realizedPnL;
-          baseTrade.status = 'closed';
-          
-          if (closedPositions.length > 0) {
-            const firstEntry = new Date(closedPositions[0].entry.trade_date || '');
-            const exit = new Date(trade.trade_date || '');
-            baseTrade.holdingPeriod = Math.floor((exit.getTime() - firstEntry.getTime()) / (1000 * 60 * 60 * 24));
+            const avgEntryPrice = totalUnits > 0 ? totalCostBasis / (totalUnits * (isOption ? 100 : 1)) : 0;
+            const multiplier = isOption ? 100 : 1;
+            
+            // For short positions (like sold options), the P&L is reversed:
+            // We received premium initially (avgEntryPrice), and we "buy back" at trade.price
+            // If avgEntryPrice > 0 and we're closing at 0 (expiration), that's profitable
+            const isShortPosition = closedPositions.some(cp => cp.entry.type === 'SELL');
+            let grossPnL: number;
+            
+            if (isShortPosition) {
+              // For short positions: profit = premium received - cost to close
+              grossPnL = (avgEntryPrice - (trade.price || 0)) * totalUnits * multiplier;
+            } else {
+              // For long positions: profit = exit price - entry price
+              grossPnL = ((trade.price || 0) - avgEntryPrice) * totalUnits * multiplier;
+            }
+            
+            const realizedPnL = grossPnL - totalEntryFees - (trade.fee || 0);
+            
+            console.log(`P&L Results for ${identifier}:`, {
+              avgEntryPrice,
+              exitPrice: trade.price,
+              totalUnits,
+              multiplier,
+              grossPnL,
+              totalEntryFees,
+              exitFee: trade.fee,
+              realizedPnL
+            });
+            
+            baseTrade.position = 'close';
+            baseTrade.entryPrice = avgEntryPrice;
+            baseTrade.exitPrice = trade.price || 0;
+            baseTrade.realizedPnL = realizedPnL;
+            baseTrade.status = 'closed';
+            
+            if (closedPositions.length > 0) {
+              const firstEntry = new Date(closedPositions[0].entry.trade_date || '');
+              const exit = new Date(trade.trade_date || '');
+              baseTrade.holdingPeriod = Math.floor((exit.getTime() - firstEntry.getTime()) / (1000 * 60 * 60 * 24));
+            }
+          } else {
+            // This is a SELL trade with no open positions - it's a short opening or option writing
+            if (isOption) {
+              // For options SELL without open position, we're opening a short position (writing/selling options)
+              baseTrade.position = 'short';
+              baseTrade.status = 'open';
+              
+              // Add to open positions for future matching (expiration, assignment, etc.)
+              if (!openPositions.has(identifier)) {
+                openPositions.set(identifier, []);
+              }
+              openPositions.get(identifier)!.push({
+                trade,
+                remainingUnits: Math.abs(trade.units || trade.quantity || 0),
+                enhancedTrade: baseTrade,
+              });
+            } else {
+              // Regular SELL without open position - treat as short position
+              baseTrade.position = 'short';
+              baseTrade.status = 'open';
+              
+              if (!openPositions.has(identifier)) {
+                openPositions.set(identifier, []);
+              }
+              openPositions.get(identifier)!.push({
+                trade,
+                remainingUnits: Math.abs(trade.units || trade.quantity || 0),
+                enhancedTrade: baseTrade,
+              });
+            }
           }
         } else if (trade.type === 'BUY') {
           // This is an opening trade
