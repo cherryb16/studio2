@@ -5,21 +5,35 @@ import { snaptrade } from './snaptrade-client';
 
 export interface SnapTradeTrade {
   id: string;
-  account_id: string;
-  symbol: string;
-  universal_symbol_id: string;
-  option_symbol?: string;
-  action: 'BUY' | 'SELL';
-  units: number;
-  price: number;
-  currency: string;
-  exchange: string;
-  executed_at: string;
-  trade_date: string;
-  settlement_date: string;
-  fee: number;
-  fx_rate: number;
-  institution_trade_id?: string;
+  account?: {
+    id: string;
+    name?: string;
+  };
+  symbol?: {
+    symbol?: string;
+    description?: string;
+  };
+  option_symbol?: {
+    underlying_symbol?: {
+      symbol?: string;
+    };
+    option_type?: string;
+    strike_price?: number;
+    expiration_date?: string;
+  };
+  type: string; // BUY, SELL, etc
+  units?: number;
+  price?: number;
+  amount?: number;
+  currency?: {
+    code: string;
+  };
+  trade_date?: string;
+  settlement_date?: string;
+  fee?: number;
+  fx_rate?: number;
+  description?: string;
+  institution?: string;
 }
 
 export interface EnhancedTrade {
@@ -59,49 +73,145 @@ export async function getSnapTradeTrades(
   endDate?: Date,
   accountId?: string
 ) {
+  console.log('=== Starting getSnapTradeTrades ===');
+  console.log('Input parameters:', {
+    snaptradeUserId,
+    userSecret: userSecret ? `${userSecret.substring(0, 8)}...` : 'undefined',
+    startDate: startDate?.toISOString(),
+    endDate: endDate?.toISOString(),
+    accountId
+  });
+
   try {
     // Get all accounts if not specified
     let accountIds: string[] = [];
     
     if (accountId) {
       accountIds = [accountId];
+      console.log('Using specific account ID:', accountId);
     } else {
+      console.log('Fetching all user accounts...');
       const accountsResponse = await snaptrade.accountInformation.listUserAccounts({
         userId: snaptradeUserId,
         userSecret: userSecret,
       });
-      accountIds = accountsResponse.data.map(acc => acc.id);
+      console.log('Accounts response:', accountsResponse);
+      console.log('Accounts data:', accountsResponse.data);
+      
+      if (accountsResponse.data && Array.isArray(accountsResponse.data)) {
+        accountIds = accountsResponse.data.map(acc => acc.id);
+        console.log('Extracted account IDs:', accountIds);
+      } else {
+        console.error('No accounts found or invalid response format');
+        return { error: 'No accounts found' };
+      }
+    }
+
+    if (accountIds.length === 0) {
+      console.error('No account IDs available');
+      return { error: 'No account IDs available' };
     }
 
     const allTrades: SnapTradeTrade[] = [];
 
-    // Fetch activities for each account
-    for (const accId of accountIds) {
-      try {
-        const activitiesResponse = await snaptrade.transactionsAndReporting.getActivities({
+    // Try multiple approaches to fetch activities
+    const attempts = [
+      {
+        name: 'All activities without type filter',
+        params: {
           userId: snaptradeUserId,
           userSecret: userSecret,
-          accounts: accId,
+          accounts: accountIds.join(','),
           startDate: startDate?.toISOString().split('T')[0],
           endDate: endDate?.toISOString().split('T')[0],
-          type: 'TRADE', // Only get trade activities
-        });
-
-        if (activitiesResponse.data && Array.isArray(activitiesResponse.data)) {
-          allTrades.push(...activitiesResponse.data as SnapTradeTrade[]);
         }
-      } catch (error) {
-        console.error(`Error fetching trades for account ${accId}:`, error);
+      },
+      {
+        name: 'BUY,SELL activities only',
+        params: {
+          userId: snaptradeUserId,
+          userSecret: userSecret,
+          accounts: accountIds.join(','),
+          startDate: startDate?.toISOString().split('T')[0],
+          endDate: endDate?.toISOString().split('T')[0],
+          type: 'BUY,SELL',
+        }
+      },
+      {
+        name: 'No date filter',
+        params: {
+          userId: snaptradeUserId,
+          userSecret: userSecret,
+          accounts: accountIds.join(','),
+        }
+      }
+    ];
+
+    for (const attempt of attempts) {
+      try {
+        console.log(`=== Attempting: ${attempt.name} ===`);
+        console.log('Request parameters:', {
+          ...attempt.params,
+          userSecret: userSecret ? `${userSecret.substring(0, 8)}...` : 'undefined'
+        });
+        
+        const activitiesResponse = await snaptrade.transactionsAndReporting.getActivities(attempt.params);
+
+        console.log('=== Activities API Response ===');
+        console.log('Response status:', activitiesResponse.status);
+        console.log('Response headers:', activitiesResponse.headers);
+        console.log('Response data type:', typeof activitiesResponse.data);
+        console.log('Response data length:', Array.isArray(activitiesResponse.data) ? activitiesResponse.data.length : 'not array');
+        
+        if (activitiesResponse.data && Array.isArray(activitiesResponse.data) && activitiesResponse.data.length > 0) {
+          console.log(`✅ SUCCESS: Found ${activitiesResponse.data.length} activities with ${attempt.name}`);
+          console.log('First activity sample:', JSON.stringify(activitiesResponse.data[0], null, 2));
+          
+          // Filter for trade types if we got all activities
+          const tradeActivities = attempt.name.includes('All activities') 
+            ? activitiesResponse.data.filter((activity: any) => 
+                activity.type === 'BUY' || activity.type === 'SELL'
+              )
+            : activitiesResponse.data;
+            
+          console.log(`Filtered to ${tradeActivities.length} trade activities`);
+          allTrades.push(...tradeActivities as SnapTradeTrade[]);
+          break; // Success, exit the loop
+        } else {
+          console.log(`❌ ${attempt.name} returned empty or invalid data:`, activitiesResponse.data);
+        }
+      } catch (attemptError) {
+        console.error(`❌ Error with ${attempt.name}:`, attemptError);
+        continue; // Try next approach
       }
     }
 
-    // Sort by execution date, most recent first
+    if (allTrades.length === 0) {
+      console.warn('=== No activities found after all attempts ===');
+      console.log('This could mean:');
+      console.log('1. No trading activity in the specified date range');
+      console.log('2. Account has no trade history');
+      console.log('3. API credentials may not have access to trade data');
+      console.log('4. SnapTrade API may be returning data in a different format');
+      
+      // Don't return an error if we simply have no trades - this is valid
+      return [];
+    }
+
+    console.log('=== Final processing ===');
+    console.log(`Total trades collected: ${allTrades.length}`);
+
+    // Sort by trade date, most recent first
     allTrades.sort((a, b) => 
-      new Date(b.executed_at).getTime() - new Date(a.executed_at).getTime()
+      new Date(b.trade_date || '').getTime() - new Date(a.trade_date || '').getTime()
     );
+
+    console.log('Returning trades:', allTrades.length > 0 ? 'SUCCESS' : 'EMPTY');
+    console.log('=== End getSnapTradeTrades ===');
 
     return allTrades;
   } catch (error) {
+    console.error('=== Outer catch block error ===');
     console.error('Error fetching SnapTrade trades:', error);
     return { error: 'Failed to fetch trades.' };
   }
@@ -115,7 +225,17 @@ export async function getEnhancedTrades(
   endDate?: Date,
   accountId?: string
 ): Promise<EnhancedTrade[] | { error: string }> {
+  console.log('=== Starting getEnhancedTrades ===');
+  console.log('Enhanced trades input parameters:', {
+    snaptradeUserId,
+    userSecret: userSecret ? `${userSecret.substring(0, 8)}...` : 'undefined',
+    startDate: startDate?.toISOString(),
+    endDate: endDate?.toISOString(),
+    accountId
+  });
+
   try {
+    console.log('Calling getSnapTradeTrades...');
     const trades = await getSnapTradeTrades(
       snaptradeUserId,
       userSecret,
@@ -124,7 +244,14 @@ export async function getEnhancedTrades(
       accountId
     );
 
+    console.log('getSnapTradeTrades result:', { 
+      isError: 'error' in trades, 
+      tradeCount: Array.isArray(trades) ? trades.length : 0,
+      trades: Array.isArray(trades) ? trades : 'ERROR'
+    });
+
     if ('error' in trades) {
+      console.error('Error from getSnapTradeTrades:', trades.error);
       return trades;
     }
 
@@ -132,7 +259,7 @@ export async function getEnhancedTrades(
     const tradesBySymbol = new Map<string, SnapTradeTrade[]>();
     
     for (const trade of trades) {
-      const symbol = trade.option_symbol || trade.symbol;
+      const symbol = trade.option_symbol?.underlying_symbol?.symbol || trade.symbol?.symbol || 'UNKNOWN';
       if (!tradesBySymbol.has(symbol)) {
         tradesBySymbol.set(symbol, []);
       }
@@ -146,27 +273,28 @@ export async function getEnhancedTrades(
     for (const [symbol, symbolTrades] of tradesBySymbol) {
       // Sort by date, oldest first for FIFO matching
       const sortedTrades = [...symbolTrades].sort((a, b) => 
-        new Date(a.executed_at).getTime() - new Date(b.executed_at).getTime()
+        new Date(a.trade_date || '').getTime() - new Date(b.trade_date || '').getTime()
       );
 
       for (const trade of sortedTrades) {
         const isOption = !!trade.option_symbol;
-        const instrument = isOption ? parseOptionSymbol(trade.option_symbol!) : trade.symbol;
+        const symbol = trade.symbol?.symbol || 'UNKNOWN';
+        const instrument = isOption ? parseOptionSymbol(trade.option_symbol!) : symbol;
         
         const baseTrade: EnhancedTrade = {
           id: trade.id,
-          accountId: trade.account_id,
-          symbol: trade.symbol,
+          accountId: trade.account?.id || '',
+          symbol: symbol,
           instrument,
-          action: trade.action,
-          position: trade.action === 'BUY' ? 'long' : 'short',
-          units: trade.units,
-          price: trade.price,
-          totalValue: trade.units * trade.price,
-          fee: trade.fee,
-          currency: trade.currency,
-          executedAt: new Date(trade.executed_at),
-          tradeDate: trade.trade_date,
+          action: trade.type as 'BUY' | 'SELL',
+          position: trade.type === 'BUY' ? 'long' : 'short',
+          units: trade.units || 0,
+          price: trade.price || 0,
+          totalValue: (trade.units || 0) * (trade.price || 0),
+          fee: trade.fee || 0,
+          currency: trade.currency?.code || 'USD',
+          executedAt: new Date(trade.trade_date || ''),
+          tradeDate: trade.trade_date || '',
           isOption,
           status: 'open',
         };
@@ -178,9 +306,9 @@ export async function getEnhancedTrades(
         // Match with open positions for P&L calculation
         const openForSymbol = openPositions.get(symbol) || [];
         
-        if (trade.action === 'SELL' && openForSymbol.length > 0) {
+        if (trade.type === 'SELL' && openForSymbol.length > 0) {
           // This is a closing trade
-          let remainingUnits = trade.units;
+          let remainingUnits = trade.units || 0;
           const closedPositions: Array<{ entry: SnapTradeTrade; units: number }> = [];
 
           // FIFO matching
@@ -206,32 +334,32 @@ export async function getEnhancedTrades(
           let totalUnits = 0;
 
           for (const closed of closedPositions) {
-            totalCostBasis += closed.entry.price * closed.units;
+            totalCostBasis += (closed.entry.price || 0) * closed.units;
             totalUnits += closed.units;
           }
 
           const avgEntryPrice = totalUnits > 0 ? totalCostBasis / totalUnits : 0;
-          const realizedPnL = (trade.price - avgEntryPrice) * totalUnits;
+          const realizedPnL = ((trade.price || 0) - avgEntryPrice) * totalUnits;
           
           baseTrade.position = 'close';
           baseTrade.entryPrice = avgEntryPrice;
-          baseTrade.exitPrice = trade.price;
+          baseTrade.exitPrice = trade.price || 0;
           baseTrade.realizedPnL = realizedPnL;
           baseTrade.status = 'closed';
           
           if (closedPositions.length > 0) {
-            const firstEntry = new Date(closedPositions[0].entry.executed_at);
-            const exit = new Date(trade.executed_at);
+            const firstEntry = new Date(closedPositions[0].entry.trade_date || '');
+            const exit = new Date(trade.trade_date || '');
             baseTrade.holdingPeriod = Math.floor((exit.getTime() - firstEntry.getTime()) / (1000 * 60 * 60 * 24));
           }
-        } else if (trade.action === 'BUY') {
+        } else if (trade.type === 'BUY') {
           // This is an opening trade
           if (!openPositions.has(symbol)) {
             openPositions.set(symbol, []);
           }
           openPositions.get(symbol)!.push({
             trade,
-            remainingUnits: trade.units,
+            remainingUnits: trade.units || 0,
           });
         }
 
@@ -250,39 +378,60 @@ export async function getEnhancedTrades(
 }
 
 // Parse option symbol to get details
-function parseOptionDetails(optionSymbol: string): EnhancedTrade['optionDetails'] {
-  // Option symbols typically follow format: AAPL230120C00150000
-  // Where: AAPL is underlying, 230120 is date (YYMMDD), C is call/put, 00150000 is strike * 1000
-  
-  const match = optionSymbol.match(/^([A-Z]+)(\d{6})([CP])(\d{8})$/);
-  
-  if (match) {
-    const [, underlying, dateStr, type, strikeStr] = match;
-    const year = parseInt('20' + dateStr.substring(0, 2));
-    const month = parseInt(dateStr.substring(2, 4));
-    const day = parseInt(dateStr.substring(4, 6));
-    const strike = parseInt(strikeStr) / 1000;
-    
+function parseOptionDetails(optionSymbol: any): EnhancedTrade['optionDetails'] {
+  // If the option symbol is already parsed by SnapTrade
+  if (typeof optionSymbol === 'object' && optionSymbol.underlying_symbol) {
     return {
-      underlying,
-      strike,
-      expiration: `${year}-${month.toString().padStart(2, '0')}-${day.toString().padStart(2, '0')}`,
-      type: type as 'CALL' | 'PUT',
+      underlying: optionSymbol.underlying_symbol.symbol || 'UNKNOWN',
+      strike: optionSymbol.strike_price || 0,
+      expiration: optionSymbol.expiration_date || 'Unknown',
+      type: optionSymbol.option_type as 'CALL' | 'PUT' || 'CALL',
     };
   }
   
-  // Fallback for non-standard format
+  // If it's a string, try to parse it
+  if (typeof optionSymbol === 'string') {
+    // Option symbols typically follow format: AAPL230120C00150000
+    // Where: AAPL is underlying, 230120 is date (YYMMDD), C is call/put, 00150000 is strike * 1000
+    
+    const match = optionSymbol.match(/^([A-Z]+)(\d{6})([CP])(\d{8})$/);
+    
+    if (match) {
+      const [, underlying, dateStr, type, strikeStr] = match;
+      const year = parseInt('20' + dateStr.substring(0, 2));
+      const month = parseInt(dateStr.substring(2, 4));
+      const day = parseInt(dateStr.substring(4, 6));
+      const strike = parseInt(strikeStr) / 1000;
+      
+      return {
+        underlying,
+        strike,
+        expiration: `${year}-${month.toString().padStart(2, '0')}-${day.toString().padStart(2, '0')}`,
+        type: type as 'CALL' | 'PUT',
+      };
+    }
+    
+    // Fallback for non-standard format
+    return {
+      underlying: optionSymbol.substring(0, 4),
+      strike: 0,
+      expiration: 'Unknown',
+      type: 'CALL',
+    };
+  }
+  
+  // Default fallback
   return {
-    underlying: optionSymbol.substring(0, 4),
+    underlying: 'UNKNOWN',
     strike: 0,
     expiration: 'Unknown',
     type: 'CALL',
   };
 }
 
-function parseOptionSymbol(optionSymbol: string): string {
+function parseOptionSymbol(optionSymbol: any): string {
   const details = parseOptionDetails(optionSymbol);
-  if (!details) return optionSymbol;
+  if (!details) return 'Unknown Option';
 
   return `${details.underlying} ${details.strike} ${details.type} ${details.expiration}`;
 }

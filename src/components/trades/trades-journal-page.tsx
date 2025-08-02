@@ -58,8 +58,12 @@ interface JournalEntry {
 }
 
 export default function TradesJournalPage() {
+  console.log('🚀 TradesJournalPage component loaded');
+  
   const { user } = useAuth();
   const [selectedPeriod, setSelectedPeriod] = useState<'day' | 'week' | 'month' | 'year' | 'all'>('month');
+  
+  console.log('👤 User state:', { uid: user?.uid, email: user?.email });
   const [selectedTrade, setSelectedTrade] = useState<EnhancedTrade | null>(null);
   const [isJournalOpen, setIsJournalOpen] = useState(false);
   const [journalNotes, setJournalNotes] = useState('');
@@ -70,22 +74,45 @@ export default function TradesJournalPage() {
   const { data: credentials } = useQuery({
     queryKey: ['snaptradeCredentials', user?.uid],
     queryFn: async () => {
+      console.log('🔑 Fetching SnapTrade credentials for user:', user?.uid);
       if (!user?.uid) throw new Error('No user ID');
       const res = await fetch(`/api/firebase/getCredentials?firebaseUserId=${user.uid}`);
+      console.log('🔑 Credentials response status:', res.status);
       if (!res.ok) throw new Error('Failed to fetch credentials');
-      return res.json();
+      const data = await res.json();
+      console.log('🔑 Credentials data:', { 
+        hasSnaptradeUserId: !!data.snaptradeUserId,
+        hasUserSecret: !!data.userSecret,
+        snaptradeUserId: data.snaptradeUserId 
+      });
+      return data;
     },
     enabled: !!user?.uid,
   });
 
   // Fetch trades
-  const { data: trades, isLoading: tradesLoading } = useQuery({
+  const { data: trades, isLoading: tradesLoading, error: tradesError } = useQuery({
     queryKey: ['trades', credentials?.snaptradeUserId, credentials?.userSecret, selectedPeriod],
-    queryFn: () => getEnhancedTrades(
-      credentials!.snaptradeUserId,
-      credentials!.userSecret,
-      selectedPeriod === 'all' ? undefined : getStartDate(selectedPeriod)
-    ),
+    queryFn: async () => {
+      console.log('=== UI: Starting trade fetch ===');
+      console.log('Credentials available:', !!credentials?.snaptradeUserId && !!credentials?.userSecret);
+      console.log('Selected period:', selectedPeriod);
+      console.log('Start date:', selectedPeriod === 'all' ? 'undefined' : getStartDate(selectedPeriod));
+      
+      const result = await getEnhancedTrades(
+        credentials!.snaptradeUserId,
+        credentials!.userSecret,
+        selectedPeriod === 'all' ? undefined : getStartDate(selectedPeriod)
+      );
+      
+      console.log('=== UI: Trade fetch result ===');
+      console.log('Result type:', typeof result);
+      console.log('Is error:', 'error' in result);
+      console.log('Trade count:', Array.isArray(result) ? result.length : 0);
+      console.log('Result:', result);
+      
+      return result;
+    },
     enabled: !!credentials?.snaptradeUserId && !!credentials?.userSecret,
   });
 
@@ -225,6 +252,17 @@ export default function TradesJournalPage() {
   const tradesArray = Array.isArray(trades) ? trades : [];
   const hasError = trades && 'error' in trades;
 
+  console.log('📊 Final render state:', {
+    user: !!user,
+    credentials: !!credentials,
+    selectedPeriod,
+    tradesLoading,
+    tradesError: tradesError?.message,
+    trades: trades,
+    tradesArray: tradesArray.length,
+    hasError
+  });
+
   return (
     <div className="space-y-6">
       <div>
@@ -311,6 +349,54 @@ export default function TradesJournalPage() {
         ))}
       </div>
 
+      {/* Debug Info */}
+      <Card className="bg-yellow-50 dark:bg-yellow-900/20 border-yellow-200 dark:border-yellow-800">
+        <CardHeader>
+          <CardTitle className="text-sm">🐛 Debug Information</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="text-xs space-y-1">
+            <div>User ID: {user?.uid || 'Not logged in'}</div>
+            <div>Has Credentials: {credentials ? 'YES' : 'NO'}</div>
+            <div>SnapTrade User ID: {credentials?.snaptradeUserId || 'None'}</div>
+            <div>Has User Secret: {credentials?.userSecret ? 'YES' : 'NO'}</div>
+            <div>Selected Period: {selectedPeriod}</div>
+            <div>Trades Loading: {tradesLoading ? 'YES' : 'NO'}</div>
+            <div>Trades Error: {tradesError?.message || 'None'}</div>
+            <div>Trades Type: {typeof trades}</div>
+            <div>Trades Array Length: {Array.isArray(trades) ? trades.length : 'Not array'}</div>
+            <div>Has Error in Trades: {trades && 'error' in trades ? 'YES' : 'NO'}</div>
+            {trades && 'error' in trades && <div>Error Message: {trades.error}</div>}
+          </div>
+          <div className="mt-3">
+            <Button 
+              onClick={async () => {
+                console.log('🧪 Manual test button clicked');
+                if (credentials?.snaptradeUserId && credentials?.userSecret) {
+                  console.log('🧪 Manually calling getEnhancedTrades...');
+                  try {
+                    const result = await getEnhancedTrades(
+                      credentials.snaptradeUserId,
+                      credentials.userSecret,
+                      undefined // no date filter
+                    );
+                    console.log('🧪 Manual test result:', result);
+                  } catch (error) {
+                    console.error('🧪 Manual test error:', error);
+                  }
+                } else {
+                  console.log('🧪 No credentials available for manual test');
+                }
+              }}
+              size="sm"
+              variant="outline"
+            >
+              🧪 Test API Call
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+
       {/* Trades Table */}
       <Card>
         <CardHeader>
@@ -325,9 +411,23 @@ export default function TradesJournalPage() {
               <Loader2 className="h-8 w-8 animate-spin" />
             </div>
           ) : hasError ? (
-            <p className="text-center text-muted-foreground py-8">
-              Error loading trades. Please try again.
-            </p>
+            <div className="text-center py-8">
+              <p className="text-red-600 font-medium mb-2">Error loading trades</p>
+              <p className="text-sm text-muted-foreground mb-4">
+                {trades && 'error' in trades ? trades.error : 'Unknown error occurred'}
+              </p>
+              <details className="text-xs text-left max-w-md mx-auto">
+                <summary className="cursor-pointer text-muted-foreground mb-2">Debug Information</summary>
+                <pre className="bg-gray-100 dark:bg-gray-800 p-2 rounded text-xs overflow-auto">
+                  {JSON.stringify({
+                    hasCredentials: !!credentials?.snaptradeUserId && !!credentials?.userSecret,
+                    selectedPeriod,
+                    tradesError: tradesError?.message,
+                    trades: trades
+                  }, null, 2)}
+                </pre>
+              </details>
+            </div>
           ) : tradesArray.length === 0 ? (
             <p className="text-center text-muted-foreground py-8">
               No trades found for the selected period.
@@ -415,12 +515,17 @@ export default function TradesJournalPage() {
                           )}
                         </TableCell>
                         <TableCell>
-                          hasJournal ? (
+                          {hasJournal ? (
+                            <Badge variant="outline" className="gap-1">
+                              <BookOpen className="h-3 w-3" />
+                              Has Note
+                            </Badge>
+                          ) : (
                             <Badge variant="outline" className="gap-1 text-muted-foreground">
                               <FileText className="h-3 w-3" />
                               Add Note
                             </Badge>
-                          ):
+                          )}
                         </TableCell>
                       </TableRow>
                     );
