@@ -23,6 +23,7 @@ export interface SnapTradeTrade {
   };
   type: string; // BUY, SELL, etc
   units?: number;
+  quantity?: number;
   price?: number;
   amount?: number;
   currency?: {
@@ -62,7 +63,7 @@ export interface EnhancedTrade {
   exitPrice?: number;
   realizedPnL?: number;
   holdingPeriod?: number;
-  status?: 'open' | 'closed' | 'partial';
+  status?: 'open' | 'closed' | 'partial' | 'expired' | 'assigned' | 'exercised';
 }
 
 // Get all activities (trades) for a user
@@ -127,14 +128,14 @@ export async function getSnapTradeTrades(
         }
       },
       {
-        name: 'BUY,SELL activities only',
+        name: 'Trade and option activities',
         params: {
           userId: snaptradeUserId,
           userSecret: userSecret,
           accounts: accountIds.join(','),
           startDate: startDate?.toISOString().split('T')[0],
           endDate: endDate?.toISOString().split('T')[0],
-          type: 'BUY,SELL',
+          type: 'BUY,SELL,OPTIONEXPIRATION,OPTIONASSIGNMENT,OPTIONEXERCISE',
         }
       },
       {
@@ -166,11 +167,12 @@ export async function getSnapTradeTrades(
         if (activitiesResponse.data && Array.isArray(activitiesResponse.data) && activitiesResponse.data.length > 0) {
           console.log(`✅ SUCCESS: Found ${activitiesResponse.data.length} activities with ${attempt.name}`);
           console.log('First activity sample:', JSON.stringify(activitiesResponse.data[0], null, 2));
+          console.log('Sample activity fields:', Object.keys(activitiesResponse.data[0]));
           
           // Filter for trade types if we got all activities
           const tradeActivities = attempt.name.includes('All activities') 
             ? activitiesResponse.data.filter((activity: any) => 
-                activity.type === 'BUY' || activity.type === 'SELL'
+                ['BUY', 'SELL', 'OPTIONEXPIRATION', 'OPTIONASSIGNMENT', 'OPTIONEXERCISE'].includes(activity.type)
               )
             : activitiesResponse.data;
             
@@ -255,48 +257,96 @@ export async function getEnhancedTrades(
       return trades;
     }
 
-    // Group trades by symbol to match opens with closes
-    const tradesBySymbol = new Map<string, SnapTradeTrade[]>();
+    // Group trades by unique identifier to match opens with closes
+    const tradesByIdentifier = new Map<string, SnapTradeTrade[]>();
     
     for (const trade of trades) {
-      const symbol = trade.option_symbol?.underlying_symbol?.symbol || trade.symbol?.symbol || 'UNKNOWN';
-      if (!tradesBySymbol.has(symbol)) {
-        tradesBySymbol.set(symbol, []);
+      const isOption = !!trade.option_symbol;
+      let identifier: string;
+      
+      if (isOption && trade.option_symbol) {
+        // For options, use symbol + strike + expiration + type to create unique identifier
+        const underlying = trade.option_symbol.underlying_symbol?.symbol || 'UNKNOWN';
+        const strike = trade.option_symbol.strike_price || 0;
+        const expiration = trade.option_symbol.expiration_date || '';
+        const optionType = trade.option_symbol.option_type || 'CALL';
+        identifier = `${underlying}_${strike}_${expiration}_${optionType}`;
+      } else {
+        // For stocks, just use the symbol
+        identifier = trade.symbol?.symbol || 'UNKNOWN';
       }
-      tradesBySymbol.get(symbol)!.push(trade);
+      
+      if (!tradesByIdentifier.has(identifier)) {
+        tradesByIdentifier.set(identifier, []);
+      }
+      tradesByIdentifier.get(identifier)!.push(trade);
     }
 
     const enhancedTrades: EnhancedTrade[] = [];
-    const openPositions = new Map<string, { trade: SnapTradeTrade; remainingUnits: number }[]>();
+    const openPositions = new Map<string, { trade: SnapTradeTrade; remainingUnits: number; enhancedTrade: EnhancedTrade }[]>();
 
-    // Process trades for each symbol
-    for (const [symbol, symbolTrades] of tradesBySymbol) {
+    // Process trades for each identifier
+    for (const [identifier, identifierTrades] of tradesByIdentifier) {
       // Sort by date, oldest first for FIFO matching
-      const sortedTrades = [...symbolTrades].sort((a, b) => 
+      const sortedTrades = [...identifierTrades].sort((a, b) => 
         new Date(a.trade_date || '').getTime() - new Date(b.trade_date || '').getTime()
       );
 
       for (const trade of sortedTrades) {
         const isOption = !!trade.option_symbol;
-        const symbol = trade.symbol?.symbol || 'UNKNOWN';
+        const symbol = trade.option_symbol?.underlying_symbol?.symbol || trade.symbol?.symbol || 'UNKNOWN';
         const instrument = isOption ? parseOptionSymbol(trade.option_symbol!) : symbol;
         
+        // Map action and status based on trade type
+        let action: 'BUY' | 'SELL';
+        let position: 'long' | 'short' | 'close';
+        let status: 'open' | 'closed' | 'partial' | 'expired' | 'assigned' | 'exercised' = 'open';
+
+        switch (trade.type) {
+          case 'BUY':
+            action = 'BUY';
+            position = 'long';
+            break;
+          case 'SELL':
+            action = 'SELL';
+            position = 'short';
+            break;
+          case 'OPTIONEXPIRATION':
+            action = 'SELL'; // Treat as a closing action
+            position = 'close';
+            status = 'expired';
+            break;
+          case 'OPTIONASSIGNMENT':
+            action = 'SELL'; // Treat as a closing action
+            position = 'close';
+            status = 'assigned';
+            break;
+          case 'OPTIONEXERCISE':
+            action = 'BUY'; // Treat as a closing action
+            position = 'close';
+            status = 'exercised';
+            break;
+          default:
+            action = 'BUY';
+            position = 'long';
+        }
+
         const baseTrade: EnhancedTrade = {
           id: trade.id,
           accountId: trade.account?.id || '',
           symbol: symbol,
           instrument,
-          action: trade.type as 'BUY' | 'SELL',
-          position: trade.type === 'BUY' ? 'long' : 'short',
-          units: trade.units || 0,
+          action,
+          position,
+          units: Math.abs(trade.units || trade.quantity || 0),
           price: trade.price || 0,
-          totalValue: (trade.units || 0) * (trade.price || 0),
+          totalValue: Math.abs(trade.units || trade.quantity || 0) * (trade.price || 0),
           fee: trade.fee || 0,
           currency: trade.currency?.code || 'USD',
           executedAt: new Date(trade.trade_date || ''),
           tradeDate: trade.trade_date || '',
           isOption,
-          status: 'open',
+          status,
         };
 
         if (isOption && trade.option_symbol) {
@@ -304,16 +354,24 @@ export async function getEnhancedTrades(
         }
 
         // Match with open positions for P&L calculation
-        const openForSymbol = openPositions.get(symbol) || [];
+        const openForIdentifier = openPositions.get(identifier) || [];
         
-        if (trade.type === 'SELL' && openForSymbol.length > 0) {
+        console.log(`Processing ${trade.type} for ${identifier}:`, {
+          tradeId: trade.id,
+          symbol,
+          units: trade.units || trade.quantity,
+          price: trade.price,
+          openPositions: openForIdentifier.length
+        });
+        
+        if (['SELL', 'OPTIONEXPIRATION', 'OPTIONASSIGNMENT', 'OPTIONEXERCISE'].includes(trade.type) && openForIdentifier.length > 0) {
           // This is a closing trade
-          let remainingUnits = trade.units || 0;
+          let remainingUnits = Math.abs(trade.units || trade.quantity || 0);
           const closedPositions: Array<{ entry: SnapTradeTrade; units: number }> = [];
 
           // FIFO matching
-          while (remainingUnits > 0 && openForSymbol.length > 0) {
-            const openPos = openForSymbol[0];
+          while (remainingUnits > 0 && openForIdentifier.length > 0) {
+            const openPos = openForIdentifier[0];
             const unitsToClose = Math.min(remainingUnits, openPos.remainingUnits);
             
             closedPositions.push({
@@ -324,22 +382,46 @@ export async function getEnhancedTrades(
             openPos.remainingUnits -= unitsToClose;
             remainingUnits -= unitsToClose;
 
+            // Update the enhanced trade status based on remaining units
             if (openPos.remainingUnits === 0) {
-              openForSymbol.shift();
+              // Fully closed - mark as closed
+              openPos.enhancedTrade.status = 'closed';
+              openPos.enhancedTrade.position = 'close';
+              openForIdentifier.shift();
+            } else {
+              // Partially closed - mark as partial
+              openPos.enhancedTrade.status = 'partial';
             }
           }
 
           // Calculate realized P&L
+          console.log(`Calculating P&L for ${identifier}, closed ${closedPositions.length} positions`);
           let totalCostBasis = 0;
           let totalUnits = 0;
+          let totalEntryFees = 0;
 
           for (const closed of closedPositions) {
-            totalCostBasis += (closed.entry.price || 0) * closed.units;
+            const multiplier = isOption ? 100 : 1; // Options represent 100 shares
+            totalCostBasis += (closed.entry.price || 0) * closed.units * multiplier;
             totalUnits += closed.units;
+            totalEntryFees += (closed.entry.fee || 0) * (closed.units / (closed.entry.units || closed.entry.quantity || 1));
           }
 
-          const avgEntryPrice = totalUnits > 0 ? totalCostBasis / totalUnits : 0;
-          const realizedPnL = ((trade.price || 0) - avgEntryPrice) * totalUnits;
+          const avgEntryPrice = totalUnits > 0 ? totalCostBasis / (totalUnits * (isOption ? 100 : 1)) : 0;
+          const multiplier = isOption ? 100 : 1;
+          const grossPnL = ((trade.price || 0) - avgEntryPrice) * totalUnits * multiplier;
+          const realizedPnL = grossPnL - totalEntryFees - (trade.fee || 0);
+          
+          console.log(`P&L Results for ${identifier}:`, {
+            avgEntryPrice,
+            exitPrice: trade.price,
+            totalUnits,
+            multiplier,
+            grossPnL,
+            totalEntryFees,
+            exitFee: trade.fee,
+            realizedPnL
+          });
           
           baseTrade.position = 'close';
           baseTrade.entryPrice = avgEntryPrice;
@@ -354,12 +436,20 @@ export async function getEnhancedTrades(
           }
         } else if (trade.type === 'BUY') {
           // This is an opening trade
-          if (!openPositions.has(symbol)) {
-            openPositions.set(symbol, []);
+          console.log(`Adding BUY position for ${identifier}:`, {
+            tradeId: trade.id,
+            units: trade.units || trade.quantity,
+            price: trade.price,
+            date: trade.trade_date
+          });
+          
+          if (!openPositions.has(identifier)) {
+            openPositions.set(identifier, []);
           }
-          openPositions.get(symbol)!.push({
+          openPositions.get(identifier)!.push({
             trade,
-            remainingUnits: trade.units || 0,
+            remainingUnits: Math.abs(trade.units || trade.quantity || 0),
+            enhancedTrade: baseTrade,
           });
         }
 
