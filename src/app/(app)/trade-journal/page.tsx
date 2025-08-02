@@ -196,10 +196,13 @@ export default function EnhancedTradeJournalPage() {
   // Filter states
   const [selectedAccount, setSelectedAccount] = useState<string>('all');
   const [selectedType, setSelectedType] = useState<'all' | 'stocks' | 'options'>('all');
-  const [selectedPnL, setSelectedPnL] = useState<'all' | 'wins' | 'losses' | 'closed'>('all');
+  const [selectedPnL, setSelectedPnL] = useState<'all' | 'wins' | 'losses' | 'closed' | 'open'>('all');
   
   // Expanded trades state
   const [expandedTrades, setExpandedTrades] = useState<Set<string>>(new Set());
+  
+  // Expanded stats cards state
+  const [expandedStatsCards, setExpandedStatsCards] = useState<Set<string>>(new Set());
 
   // Get SnapTrade credentials
   const { data: credentials } = useQuery({
@@ -208,7 +211,7 @@ export default function EnhancedTradeJournalPage() {
       if (!user?.uid) throw new Error('No user ID');
       const res = await fetch(`/api/firebase/getCredentials?firebaseUserId=${user.uid}`);
       if (!res.ok) throw new Error('Failed to fetch credentials');
-      return res.json();
+      return res.json() as Promise<{ snaptradeUserId: string; userSecret: string }>;
     },
     enabled: !!user?.uid,
   });
@@ -361,6 +364,18 @@ export default function EnhancedTradeJournalPage() {
     });
   };
 
+  const toggleStatsCardExpansion = (cardId: string) => {
+    setExpandedStatsCards(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(cardId)) {
+        newSet.delete(cardId);
+      } else {
+        newSet.add(cardId);
+      }
+      return newSet;
+    });
+  };
+
   const formatCurrency = (amount: number, currency: string = 'USD') => {
     return new Intl.NumberFormat('en-US', {
       style: 'currency',
@@ -437,12 +452,101 @@ export default function EnhancedTradeJournalPage() {
     if (selectedPnL === 'closed' && trade.status !== 'closed') {
       return false;
     }
+    if (selectedPnL === 'open' && trade.status !== 'open') {
+      return false;
+    }
 
     return true;
   });
 
   // Group related trades together
   const groupedTrades = groupRelatedTrades(filteredTrades);
+
+  // Calculate filtered stats based on selected filters
+  const filteredStats = React.useMemo(() => {
+    if (!stats || 'error' in stats) return null;
+    
+    const closedFilteredTrades = filteredTrades.filter(t => t.status === 'closed');
+    const winningFilteredTrades = filteredTrades.filter(t => t.realizedPnL && t.realizedPnL > 0);
+    const losingFilteredTrades = filteredTrades.filter(t => t.realizedPnL && t.realizedPnL < 0);
+    
+    const totalRealizedPnL = filteredTrades.reduce((sum, t) => sum + (t.realizedPnL || 0), 0);
+    const totalFees = filteredTrades.reduce((sum, t) => sum + t.fee, 0);
+    
+    const winRate = closedFilteredTrades.length > 0 ? (winningFilteredTrades.length / closedFilteredTrades.length) * 100 : 0;
+    
+    let totalWins = 0;
+    let totalLosses = 0;
+    
+    for (const trade of filteredTrades) {
+      if (trade.realizedPnL && trade.realizedPnL > 0) {
+        totalWins += trade.realizedPnL;
+      } else if (trade.realizedPnL && trade.realizedPnL < 0) {
+        totalLosses += Math.abs(trade.realizedPnL);
+      }
+    }
+    
+    const avgWin = winningFilteredTrades.length > 0 ? totalWins / winningFilteredTrades.length : 0;
+    const profitFactor = totalLosses > 0 ? totalWins / totalLosses : 0;
+    
+    // Detailed breakdowns for expandable cards
+    const stockTrades = filteredTrades.filter(t => !t.isOption);
+    const optionTrades = filteredTrades.filter(t => t.isOption);
+    const avgLoss = losingFilteredTrades.length > 0 ? totalLosses / losingFilteredTrades.length : 0;
+    
+    // Find largest win and loss
+    const largestWin = winningFilteredTrades.reduce<EnhancedTrade | null>((max, trade) => {
+      return trade.realizedPnL !== undefined && (max === null || trade.realizedPnL > (max.realizedPnL ?? -Infinity)) ? trade : max;
+    }, null);
+    const largestLoss = losingFilteredTrades.reduce<EnhancedTrade | null>((min, trade) => {
+      return trade.realizedPnL !== undefined && (min === null || trade.realizedPnL < (min.realizedPnL ?? Infinity)) ? trade : min;
+    }, null);
+
+    // Breakdown by account
+    const accountBreakdown = filteredTrades.reduce((acc, trade) => {
+      const accountName = accounts?.find(a => a.id === trade.accountId)?.name || `Account ${trade.accountId.slice(-4)}`;
+      if (!acc[accountName]) {
+        acc[accountName] = { trades: 0, pnl: 0, fees: 0 };
+      }
+      acc[accountName].trades++;
+      acc[accountName].pnl += trade.realizedPnL || 0;
+      acc[accountName].fees += trade.fee;
+      return acc;
+    }, {} as Record<string, { trades: number; pnl: number; fees: number }>);
+
+    // Breakdown by symbol
+    const symbolBreakdown = filteredTrades.reduce((acc, trade) => {
+      if (!acc[trade.symbol]) {
+        acc[trade.symbol] = { trades: 0, pnl: 0, fees: 0 };
+      }
+      acc[trade.symbol].trades++;
+      acc[trade.symbol].pnl += trade.realizedPnL || 0;
+      acc[trade.symbol].fees += trade.fee;
+      return acc;
+    }, {} as Record<string, { trades: number; pnl: number; fees: number }>);
+
+    return {
+      totalTrades: filteredTrades.length,
+      closedTrades: closedFilteredTrades.length,
+      winningTrades: winningFilteredTrades.length,
+      losingTrades: losingFilteredTrades.length,
+      totalRealizedPnL,
+      totalFees,
+      winRate,
+      avgWin,
+      avgLoss,
+      profitFactor,
+      optionTrades: optionTrades.length,
+      stockTrades: stockTrades.length,
+      largestWin,
+      largestLoss,
+      accountBreakdown,
+      symbolBreakdown: Object.entries(symbolBreakdown)
+        .sort(([,a], [,b]) => b.trades - a.trades)
+        .slice(0, 5) // Top 5 most traded symbols
+        .reduce((acc, [symbol, data]) => ({ ...acc, [symbol]: data }), {})
+    };
+  }, [filteredTrades, stats]);
 
   return (
     <div className="space-y-6">
@@ -454,76 +558,218 @@ export default function EnhancedTradeJournalPage() {
       </div>
 
       {/* Enhanced Summary Stats */}
-      {stats && !('error' in stats) && (
+      {filteredStats && (
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-5">
-          <Card>
+          <Card className="cursor-pointer hover:bg-muted/50" onClick={() => toggleStatsCardExpansion('pnl')}>
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Total P&L</CardTitle>
+              <CardTitle className="text-sm font-medium flex items-center gap-2">
+                Total P&L
+                {expandedStatsCards.has('pnl') ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+              </CardTitle>
               <DollarSign className="h-4 w-4 text-muted-foreground" />
             </CardHeader>
             <CardContent>
-              <div className={`text-2xl font-bold ${stats.totalRealizedPnL >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                {formatCurrency(stats.totalRealizedPnL)}
+              <div className={`text-2xl font-bold ${filteredStats.totalRealizedPnL >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                {formatCurrency(filteredStats.totalRealizedPnL)}
               </div>
               <p className="text-xs text-muted-foreground">
-                {stats.closedTrades} closed trades
+                {filteredStats.closedTrades} closed trades
               </p>
+              {expandedStatsCards.has('pnl') && (
+                <div className="mt-4 space-y-2 border-t pt-3">
+                  <div className="text-xs space-y-1">
+                    <div className="flex justify-between">
+                      <span>Largest Win:</span>
+                      <span className="text-green-600">
+                        {filteredStats.largestWin ? `${filteredStats.largestWin.symbol} ${formatCurrency(filteredStats.largestWin.realizedPnL || 0)}` : 'N/A'}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Largest Loss:</span>
+                      <span className="text-red-600">
+                        {filteredStats.largestLoss ? `${filteredStats.largestLoss.symbol} ${formatCurrency(filteredStats.largestLoss.realizedPnL || 0)}` : 'N/A'}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Total Fees:</span>
+                      <span>{formatCurrency(filteredStats.totalFees)}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Net P&L:</span>
+                      <span className={filteredStats.totalRealizedPnL - filteredStats.totalFees >= 0 ? 'text-green-600' : 'text-red-600'}>
+                        {formatCurrency(filteredStats.totalRealizedPnL - filteredStats.totalFees)}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              )}
             </CardContent>
           </Card>
 
-          <Card>
+          <Card className="cursor-pointer hover:bg-muted/50" onClick={() => toggleStatsCardExpansion('winrate')}>
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Win Rate</CardTitle>
+              <CardTitle className="text-sm font-medium flex items-center gap-2">
+                Win Rate
+                {expandedStatsCards.has('winrate') ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+              </CardTitle>
               <Target className="h-4 w-4 text-muted-foreground" />
             </CardHeader>
             <CardContent>
               <div className="text-2xl font-bold">
-                {stats.winRate.toFixed(1)}%
+                {filteredStats.winRate.toFixed(1)}%
               </div>
               <p className="text-xs text-muted-foreground">
-                {stats.winningTrades}W / {stats.losingTrades}L
+                {filteredStats.winningTrades}W / {filteredStats.losingTrades}L
               </p>
+              {expandedStatsCards.has('winrate') && (
+                <div className="mt-4 space-y-2 border-t pt-3">
+                  <div className="text-xs space-y-1">
+                    <div className="flex justify-between">
+                      <span>Total Trades:</span>
+                      <span>{filteredStats.totalTrades}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Closed Trades:</span>
+                      <span>{filteredStats.closedTrades}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Open Trades:</span>
+                      <span>{filteredStats.totalTrades - filteredStats.closedTrades}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Win %:</span>
+                      <span className="text-green-600">{((filteredStats.winningTrades / filteredStats.totalTrades) * 100).toFixed(1)}%</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Loss %:</span>
+                      <span className="text-red-600">{((filteredStats.losingTrades / filteredStats.totalTrades) * 100).toFixed(1)}%</span>
+                    </div>
+                  </div>
+                </div>
+              )}
             </CardContent>
           </Card>
 
-          <Card>
+          <Card className="cursor-pointer hover:bg-muted/50" onClick={() => toggleStatsCardExpansion('profitfactor')}>
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Profit Factor</CardTitle>
+              <CardTitle className="text-sm font-medium flex items-center gap-2">
+                Profit Factor
+                {expandedStatsCards.has('profitfactor') ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+              </CardTitle>
               <Activity className="h-4 w-4 text-muted-foreground" />
             </CardHeader>
             <CardContent>
               <div className="text-2xl font-bold">
-                {stats.profitFactor.toFixed(2)}
+                {filteredStats.profitFactor.toFixed(2)}
               </div>
               <p className="text-xs text-muted-foreground">
-                Avg Win: {formatCurrency(stats.avgWin)}
+                Avg Win: {formatCurrency(filteredStats.avgWin)}
               </p>
+              {expandedStatsCards.has('profitfactor') && (
+                <div className="mt-4 space-y-2 border-t pt-3">
+                  <div className="text-xs space-y-1">
+                    <div className="flex justify-between">
+                      <span>Avg Win:</span>
+                      <span className="text-green-600">{formatCurrency(filteredStats.avgWin)}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Avg Loss:</span>
+                      <span className="text-red-600">{formatCurrency(filteredStats.avgLoss)}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Win/Loss Ratio:</span>
+                      <span>{filteredStats.avgLoss > 0 ? (filteredStats.avgWin / filteredStats.avgLoss).toFixed(2) : 'N/A'}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Total Wins:</span>
+                      <span className="text-green-600">{formatCurrency(filteredStats.avgWin * filteredStats.winningTrades)}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Total Losses:</span>
+                      <span className="text-red-600">{formatCurrency(filteredStats.avgLoss * filteredStats.losingTrades)}</span>
+                    </div>
+                  </div>
+                </div>
+              )}
             </CardContent>
           </Card>
 
-          <Card>
+          <Card className="cursor-pointer hover:bg-muted/50" onClick={() => toggleStatsCardExpansion('options')}>
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Options Activity</CardTitle>
+              <CardTitle className="text-sm font-medium flex items-center gap-2">
+                Options Activity
+                {expandedStatsCards.has('options') ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+              </CardTitle>
               <Zap className="h-4 w-4 text-muted-foreground" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">{filteredTrades.filter(t => t.isOption).length}</div>
+              <div className="text-2xl font-bold">{filteredStats.optionTrades}</div>
               <p className="text-xs text-muted-foreground">
                 option trades
               </p>
+              {expandedStatsCards.has('options') && (
+                <div className="mt-4 space-y-2 border-t pt-3">
+                  <div className="text-xs space-y-1">
+                    <div className="flex justify-between">
+                      <span>Stock Trades:</span>
+                      <span>{filteredStats.stockTrades}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Option Trades:</span>
+                      <span>{filteredStats.optionTrades}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Option %:</span>
+                      <span>{filteredStats.totalTrades > 0 ? ((filteredStats.optionTrades / filteredStats.totalTrades) * 100).toFixed(1) : 0}%</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Stock %:</span>
+                      <span>{filteredStats.totalTrades > 0 ? ((filteredStats.stockTrades / filteredStats.totalTrades) * 100).toFixed(1) : 0}%</span>
+                    </div>
+                  </div>
+                </div>
+              )}
             </CardContent>
           </Card>
 
-          <Card>
+          <Card className="cursor-pointer hover:bg-muted/50" onClick={() => toggleStatsCardExpansion('activity')}>
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Total Activity</CardTitle>
+              <CardTitle className="text-sm font-medium flex items-center gap-2">
+                Total Activity
+                {expandedStatsCards.has('activity') ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+              </CardTitle>
               <BarChart3 className="h-4 w-4 text-muted-foreground" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">{stats.totalTrades}</div>
+              <div className="text-2xl font-bold">{filteredStats.totalTrades}</div>
               <p className="text-xs text-muted-foreground">
-                Fees: {formatCurrency(stats.totalFees)}
+                Fees: {formatCurrency(filteredStats.totalFees)}
               </p>
+              {expandedStatsCards.has('activity') && (
+                <div className="mt-4 space-y-2 border-t pt-3">
+                  <div className="text-xs">
+                    <div className="font-medium mb-2">Top Symbols:</div>
+                    <div className="space-y-1">
+                      {Object.entries(filteredStats.symbolBreakdown).map(([symbol, data]) => (
+                        <div key={symbol} className="flex justify-between items-center">
+                          <span className="font-medium">{symbol}</span>
+                          <div className="text-right">
+                            <div className="flex items-center gap-2">
+                              <span>{data.trades} trades</span>
+                              <span className={data.pnl >= 0 ? 'text-green-600' : 'text-red-600'}>
+                                {formatCurrency(data.pnl)}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                      {Object.keys(filteredStats.symbolBreakdown).length === 0 && (
+                        <div className="text-muted-foreground">No closed trades</div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
             </CardContent>
           </Card>
         </div>
@@ -553,14 +799,28 @@ export default function EnhancedTradeJournalPage() {
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">All accounts</SelectItem>
-              {accounts?.map((account: any) => {
-                console.log('Rendering account:', account);
+              {accounts && accounts.length > 0 ? accounts.map((account: any) => {
+                // Try different possible name fields from the SnapTrade API
+                const accountName = account.name || 
+                                  account.account_name || 
+                                  account.nickname || 
+                                  account.institution_name || 
+                                  account.number || 
+                                  `Account ${account.id.slice(-4)}` || 
+                                  'Unknown Account';
+                
+                console.log('Rendering account:', { id: account.id, name: accountName, fullAccount: account });
+                
                 return (
                   <SelectItem key={account.id} value={account.id}>
-                    {account.name || account.number || account.id || 'Unknown Account'}
+                    {accountName}
                   </SelectItem>
                 );
-              })}
+              }) : (
+                <SelectItem value="loading" disabled>
+                  Loading accounts...
+                </SelectItem>
+              )}
             </SelectContent>
           </Select>
         </div>
@@ -581,7 +841,7 @@ export default function EnhancedTradeJournalPage() {
 
         <div className="flex items-center gap-2">
           <label className="text-sm font-medium">Results:</label>
-          <Select value={selectedPnL} onValueChange={(value) => setSelectedPnL(value as 'all' | 'wins' | 'losses' | 'closed')}>
+          <Select value={selectedPnL} onValueChange={(value) => setSelectedPnL(value as 'all' | 'wins' | 'losses' | 'closed' | 'open')}>
             <SelectTrigger className="w-[120px]">
               <SelectValue />
             </SelectTrigger>
@@ -590,6 +850,7 @@ export default function EnhancedTradeJournalPage() {
               <SelectItem value="wins">Wins only</SelectItem>
               <SelectItem value="losses">Losses only</SelectItem>
               <SelectItem value="closed">Closed only</SelectItem>
+              <SelectItem value="open">Open only</SelectItem>
             </SelectContent>
           </Select>
         </div>
