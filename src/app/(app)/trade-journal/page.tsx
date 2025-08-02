@@ -1,13 +1,13 @@
 'use client';
 
-import { useState } from 'react';
+import React, { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useAuth } from '@/hooks/use-auth';
 import { 
-  getEnhancedTradeActivities, 
-  getTradesSummaryStats,
-  type EnhancedTradeActivity 
-} from '@/app/actions/snaptrade-trades-enhanced';
+  getEnhancedTrades, 
+  getTradeSummaryStats,
+  type EnhancedTrade 
+} from '@/app/actions/snaptrade-trades';
 import { getJournalPrompts } from '@/app/actions';
 import {
   Card,
@@ -19,6 +19,13 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import {
   Table,
   TableBody,
@@ -48,7 +55,9 @@ import {
   BarChart3,
   Timer,
   Zap,
-  Award
+  Award,
+  ChevronDown,
+  ChevronRight
 } from 'lucide-react';
 import { format } from 'date-fns';
 import type { Trade } from '@/lib/types';
@@ -62,14 +71,135 @@ interface JournalEntry {
   tags?: string[];
 }
 
+interface GroupedTrade {
+  id: string;
+  symbol: string;
+  instrument: string;
+  isOption: boolean;
+  optionDetails?: EnhancedTrade['optionDetails'];
+  totalUnits: number;
+  averageEntryPrice: number;
+  averageExitPrice?: number;
+  totalValue: number;
+  totalFees: number;
+  realizedPnL?: number;
+  status: 'open' | 'closed' | 'partial';
+  currency: string;
+  executedAt: Date;
+  holdingPeriod?: number;
+  trades: EnhancedTrade[]; // Individual buy/sell trades
+}
+
+// Function to group related trades
+function groupRelatedTrades(trades: EnhancedTrade[]): GroupedTrade[] {
+  const groups = new Map<string, EnhancedTrade[]>();
+  
+  // Group trades by instrument identifier
+  for (const trade of trades) {
+    let groupKey: string;
+    
+    if (trade.isOption && trade.optionDetails) {
+      // For options, group by symbol + strike + expiration + type
+      groupKey = `${trade.symbol}_${trade.optionDetails.strike}_${trade.optionDetails.expiration}_${trade.optionDetails.type}`;
+    } else {
+      // For stocks, group by symbol
+      groupKey = trade.symbol;
+    }
+    
+    if (!groups.has(groupKey)) {
+      groups.set(groupKey, []);
+    }
+    groups.get(groupKey)!.push(trade);
+  }
+  
+  // Convert groups to GroupedTrade objects
+  const groupedTrades: GroupedTrade[] = [];
+  
+  for (const [groupKey, groupTrades] of groups) {
+    // Sort trades by date
+    const sortedTrades = groupTrades.sort((a, b) => a.executedAt.getTime() - b.executedAt.getTime());
+    
+    // Calculate aggregate values
+    const buyTrades = sortedTrades.filter(t => t.action === 'BUY');
+    const sellTrades = sortedTrades.filter(t => t.action === 'SELL');
+    
+    const totalBuyUnits = buyTrades.reduce((sum, t) => sum + t.units, 0);
+    const totalSellUnits = sellTrades.reduce((sum, t) => sum + t.units, 0);
+    const totalBuyValue = buyTrades.reduce((sum, t) => sum + (t.units * t.price), 0);
+    const totalSellValue = sellTrades.reduce((sum, t) => sum + (t.units * t.price), 0);
+    
+    const averageEntryPrice = totalBuyUnits > 0 ? totalBuyValue / totalBuyUnits : 0;
+    const averageExitPrice = totalSellUnits > 0 ? totalSellValue / totalSellUnits : undefined;
+    
+    const totalFees = sortedTrades.reduce((sum, t) => sum + t.fee, 0);
+    const totalUnits = totalBuyUnits - totalSellUnits;
+    
+    // Determine status
+    let status: GroupedTrade['status'] = 'open';
+    let realizedPnL: number | undefined;
+    
+    if (totalUnits === 0) {
+      status = 'closed';
+      // Calculate P&L for closed positions
+      const multiplier = sortedTrades[0]?.isOption ? 100 : 1;
+      if (averageExitPrice && averageEntryPrice) {
+        realizedPnL = (averageExitPrice - averageEntryPrice) * totalSellUnits * multiplier - totalFees;
+      }
+    } else if (totalSellUnits > 0) {
+      status = 'partial';
+      // Calculate partial P&L
+      const multiplier = sortedTrades[0]?.isOption ? 100 : 1;
+      if (averageExitPrice && averageEntryPrice) {
+        realizedPnL = (averageExitPrice - averageEntryPrice) * totalSellUnits * multiplier - totalFees;
+      }
+    }
+    
+    const firstTrade = sortedTrades[0];
+    const lastTrade = sortedTrades[sortedTrades.length - 1];
+    const holdingPeriod = status === 'closed' && buyTrades.length > 0 && sellTrades.length > 0
+      ? Math.floor((lastTrade.executedAt.getTime() - firstTrade.executedAt.getTime()) / (1000 * 60 * 60 * 24))
+      : undefined;
+    
+    groupedTrades.push({
+      id: groupKey,
+      symbol: firstTrade.symbol,
+      instrument: firstTrade.instrument,
+      isOption: firstTrade.isOption,
+      optionDetails: firstTrade.optionDetails,
+      totalUnits: Math.abs(totalUnits),
+      averageEntryPrice,
+      averageExitPrice,
+      totalValue: Math.abs(totalUnits * averageEntryPrice),
+      totalFees,
+      realizedPnL,
+      status,
+      currency: firstTrade.currency,
+      executedAt: lastTrade.executedAt, // Use the most recent trade date
+      holdingPeriod,
+      trades: sortedTrades,
+    });
+  }
+  
+  // Sort grouped trades by most recent activity
+  return groupedTrades.sort((a, b) => b.executedAt.getTime() - a.executedAt.getTime());
+}
+
 export default function EnhancedTradeJournalPage() {
   const { user } = useAuth();
   const [selectedPeriod, setSelectedPeriod] = useState<'day' | 'week' | 'month' | 'year' | 'all'>('month');
-  const [selectedTrade, setSelectedTrade] = useState<EnhancedTradeActivity | null>(null);
+  const [selectedTrade, setSelectedTrade] = useState<EnhancedTrade | null>(null);
   const [isJournalOpen, setIsJournalOpen] = useState(false);
   const [journalNotes, setJournalNotes] = useState('');
   const [loadingPrompts, setLoadingPrompts] = useState(false);
   const [aiPrompts, setAiPrompts] = useState<string[]>([]);
+  
+  // Filter states
+  const [selectedAccount, setSelectedAccount] = useState<string>('all');
+  const [selectedType, setSelectedType] = useState<'all' | 'stocks' | 'options'>('all');
+  const [selectedPnL, setSelectedPnL] = useState<'all' | 'wins' | 'losses' | 'closed'>('all');
+  
+  // Expanded trades state
+  const [expandedTrades, setExpandedTrades] = useState<Set<string>>(new Set());
 
   // Get SnapTrade credentials
   const { data: credentials } = useQuery({
@@ -83,10 +213,31 @@ export default function EnhancedTradeJournalPage() {
     enabled: !!user?.uid,
   });
 
+  // Get user accounts
+  const { data: accounts } = useQuery({
+    queryKey: ['snaptradeAccounts', credentials?.snaptradeUserId, credentials?.userSecret],
+    queryFn: async () => {
+      if (!credentials?.snaptradeUserId || !credentials?.userSecret) return [];
+      try {
+        const { snaptrade } = await import('@/app/actions/snaptrade-client');
+        const response = await snaptrade.accountInformation.listUserAccounts({
+          userId: credentials.snaptradeUserId,
+          userSecret: credentials.userSecret,
+        });
+        console.log('Fetched accounts:', response.data);
+        return response.data || [];
+      } catch (error) {
+        console.error('Error fetching accounts:', error);
+        return [];
+      }
+    },
+    enabled: !!credentials?.snaptradeUserId && !!credentials?.userSecret,
+  });
+
   // Fetch trade activities
   const { data: trades, isLoading: tradesLoading } = useQuery({
     queryKey: ['tradeActivities', credentials?.snaptradeUserId, credentials?.userSecret, selectedPeriod],
-    queryFn: () => getEnhancedTradeActivities(
+    queryFn: () => getEnhancedTrades(
       credentials!.snaptradeUserId,
       credentials!.userSecret,
       selectedPeriod === 'all' ? undefined : getStartDate(selectedPeriod)
@@ -97,7 +248,7 @@ export default function EnhancedTradeJournalPage() {
   // Fetch trade statistics
   const { data: stats } = useQuery({
     queryKey: ['tradeStats', credentials?.snaptradeUserId, credentials?.userSecret, selectedPeriod],
-    queryFn: () => getTradesSummaryStats(
+    queryFn: () => getTradeSummaryStats(
       credentials!.snaptradeUserId,
       credentials!.userSecret,
       selectedPeriod
@@ -133,7 +284,7 @@ export default function EnhancedTradeJournalPage() {
     return date;
   };
 
-  const handleJournalOpen = async (trade: EnhancedTradeActivity) => {
+  const handleJournalOpen = async (trade: EnhancedTrade) => {
     setSelectedTrade(trade);
     setIsJournalOpen(true);
     
@@ -198,6 +349,18 @@ export default function EnhancedTradeJournalPage() {
     setJournalNotes(prev => prev ? `${prev}\n\n${prompt}` : prompt);
   };
 
+  const toggleTradeExpansion = (tradeId: string) => {
+    setExpandedTrades(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(tradeId)) {
+        newSet.delete(tradeId);
+      } else {
+        newSet.add(tradeId);
+      }
+      return newSet;
+    });
+  };
+
   const formatCurrency = (amount: number, currency: string = 'USD') => {
     return new Intl.NumberFormat('en-US', {
       style: 'currency',
@@ -240,6 +403,46 @@ export default function EnhancedTradeJournalPage() {
 
   const tradesArray = Array.isArray(trades) ? trades : [];
   const hasError = trades && 'error' in trades;
+
+  // Debug logging
+  if (accounts && accounts.length > 0) {
+    console.log('Accounts structure:', accounts[0]);
+    console.log('All accounts:', accounts);
+  } else {
+    console.log('No accounts found or accounts is empty:', accounts);
+  }
+
+  // Filter trades based on selected filters
+  const filteredTrades = tradesArray.filter((trade) => {
+    // Account filter
+    if (selectedAccount !== 'all' && trade.accountId !== selectedAccount) {
+      return false;
+    }
+
+    // Type filter
+    if (selectedType === 'stocks' && trade.isOption) {
+      return false;
+    }
+    if (selectedType === 'options' && !trade.isOption) {
+      return false;
+    }
+
+    // P&L filter
+    if (selectedPnL === 'wins' && (trade.realizedPnL === undefined || trade.realizedPnL <= 0)) {
+      return false;
+    }
+    if (selectedPnL === 'losses' && (trade.realizedPnL === undefined || trade.realizedPnL >= 0)) {
+      return false;
+    }
+    if (selectedPnL === 'closed' && trade.status !== 'closed') {
+      return false;
+    }
+
+    return true;
+  });
+
+  // Group related trades together
+  const groupedTrades = groupRelatedTrades(filteredTrades);
 
   return (
     <div className="space-y-6">
@@ -304,9 +507,9 @@ export default function EnhancedTradeJournalPage() {
               <Zap className="h-4 w-4 text-muted-foreground" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">{stats.optionTrades}</div>
+              <div className="text-2xl font-bold">{filteredTrades.filter(t => t.isOption).length}</div>
               <p className="text-xs text-muted-foreground">
-                {stats.tradesByType.optionExpired} expired
+                option trades
               </p>
             </CardContent>
           </Card>
@@ -319,7 +522,7 @@ export default function EnhancedTradeJournalPage() {
             <CardContent>
               <div className="text-2xl font-bold">{stats.totalTrades}</div>
               <p className="text-xs text-muted-foreground">
-                Fees: {formatCurrency(stats.totalCommissions)}
+                Fees: {formatCurrency(stats.totalFees)}
               </p>
             </CardContent>
           </Card>
@@ -340,6 +543,62 @@ export default function EnhancedTradeJournalPage() {
         ))}
       </div>
 
+      {/* Filters */}
+      <div className="flex flex-wrap gap-4 items-center">
+        <div className="flex items-center gap-2">
+          <label className="text-sm font-medium">Account:</label>
+          <Select value={selectedAccount} onValueChange={setSelectedAccount}>
+            <SelectTrigger className="w-[180px]">
+              <SelectValue placeholder="All accounts" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All accounts</SelectItem>
+              {accounts?.map((account: any) => {
+                console.log('Rendering account:', account);
+                return (
+                  <SelectItem key={account.id} value={account.id}>
+                    {account.name || account.number || account.id || 'Unknown Account'}
+                  </SelectItem>
+                );
+              })}
+            </SelectContent>
+          </Select>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <label className="text-sm font-medium">Type:</label>
+          <Select value={selectedType} onValueChange={(value) => setSelectedType(value as 'all' | 'stocks' | 'options')}>
+            <SelectTrigger className="w-[120px]">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All</SelectItem>
+              <SelectItem value="stocks">Stocks</SelectItem>
+              <SelectItem value="options">Options</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <label className="text-sm font-medium">Results:</label>
+          <Select value={selectedPnL} onValueChange={(value) => setSelectedPnL(value as 'all' | 'wins' | 'losses' | 'closed')}>
+            <SelectTrigger className="w-[120px]">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All</SelectItem>
+              <SelectItem value="wins">Wins only</SelectItem>
+              <SelectItem value="losses">Losses only</SelectItem>
+              <SelectItem value="closed">Closed only</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+
+        <div className="text-sm text-muted-foreground">
+          Showing {groupedTrades.length} positions ({filteredTrades.length} individual trades)
+        </div>
+      </div>
+
       {/* Enhanced Trades Table */}
       <Card>
         <CardHeader>
@@ -357,9 +616,9 @@ export default function EnhancedTradeJournalPage() {
             <p className="text-center text-muted-foreground py-8">
               Error loading trades. Please try again.
             </p>
-          ) : tradesArray.length === 0 ? (
+          ) : groupedTrades.length === 0 ? (
             <p className="text-center text-muted-foreground py-8">
-              No trades found for the selected period.
+              {tradesArray.length === 0 ? 'No trades found for the selected period.' : 'No trades match the selected filters.'}
             </p>
           ) : (
             <ScrollArea className="h-[600px]">
@@ -379,116 +638,213 @@ export default function EnhancedTradeJournalPage() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {tradesArray.map((trade) => {
-                    const hasJournal = journalEntries?.some(
-                      (entry: JournalEntry) => entry.tradeId === trade.id
+                  {groupedTrades.map((groupedTrade) => {
+                    const isExpanded = expandedTrades.has(groupedTrade.id);
+                    const hasJournal = groupedTrade.trades.some(trade => 
+                      journalEntries?.some((entry: JournalEntry) => entry.tradeId === trade.id)
                     );
                     
                     return (
-                      <TableRow 
-                        key={trade.id}
-                        className="cursor-pointer hover:bg-muted/50"
-                        onClick={() => handleJournalOpen(trade)}
-                      >
-                        <TableCell>
-                          <div>
-                            <div className="font-medium">
-                              {format(trade.executedAt, 'MMM dd, yyyy')}
-                            </div>
-                            <div className="text-xs text-muted-foreground">
-                              {format(trade.executedAt, 'HH:mm:ss')}
-                            </div>
-                          </div>
-                        </TableCell>
-                        
-                        <TableCell>
-                          <div>
-                            <div className="font-medium">{trade.symbol}</div>
-                            {trade.isOption && trade.optionDetails && (
-                              <div className="text-xs text-muted-foreground">
-                                {trade.optionDetails.type} ${trade.optionDetails.strike} {format(new Date(trade.optionDetails.expiration), 'MMM dd')}
+                      <React.Fragment key={groupedTrade.id}>
+                        {/* Main grouped trade row */}
+                        <TableRow 
+                          className="cursor-pointer hover:bg-muted/50"
+                          onClick={() => toggleTradeExpansion(groupedTrade.id)}
+                        >
+                          <TableCell>
+                            <div className="flex items-center gap-2">
+                              {isExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                              <div>
+                                <div className="font-medium">
+                                  {format(groupedTrade.executedAt, 'MMM dd, yyyy')}
+                                </div>
+                                <div className="text-xs text-muted-foreground">
+                                  {groupedTrade.trades.length} trade{groupedTrade.trades.length !== 1 ? 's' : ''}
+                                </div>
                               </div>
-                            )}
-                          </div>
-                        </TableCell>
-                        
-                        <TableCell>
-                          <Badge variant={trade.isOption ? 'secondary' : 'default'}>
-                            {trade.isOption ? 'Option' : 'Stock'}
-                          </Badge>
-                        </TableCell>
-                        
-                        <TableCell>
-                          <Badge 
-                            className={getActionBadgeColor(trade.action)}
-                            variant="outline"
-                          >
-                            {trade.action}
-                          </Badge>
-                        </TableCell>
-                        
-                        <TableCell className="text-right">{trade.quantity}</TableCell>
-                        
-                        <TableCell className="text-right">
-                          {formatCurrency(trade.price)}
-                        </TableCell>
-                        
-                        <TableCell className="text-right">
-                          {formatCurrency(trade.totalValue)}
-                        </TableCell>
-                        
-                        <TableCell className="text-right">
-                          {trade.realizedPnL !== undefined ? (
-                            <div className={trade.realizedPnL >= 0 ? 'text-green-600' : 'text-red-600'}>
-                              {formatCurrency(trade.realizedPnL)}
-                              {trade.entryPrice && trade.exitPrice && (
-                                <div className="text-xs">
-                                  {formatPercent(((trade.exitPrice - trade.entryPrice) / trade.entryPrice) * 100)}
+                            </div>
+                          </TableCell>
+                          
+                          <TableCell>
+                            <div>
+                              <div className="font-medium">{groupedTrade.symbol}</div>
+                              {groupedTrade.isOption && groupedTrade.optionDetails && (
+                                <div className="text-xs text-muted-foreground">
+                                  {groupedTrade.optionDetails.type} ${groupedTrade.optionDetails.strike} {format(new Date(groupedTrade.optionDetails.expiration), 'MMM dd')}
                                 </div>
                               )}
                             </div>
-                          ) : (
-                            <span className="text-muted-foreground">-</span>
-                          )}
-                        </TableCell>
-                        
-                        <TableCell>
-                          <div className="flex items-center gap-1">
-                            <Badge 
-                              variant="outline" 
-                              className={
-                                trade.status === 'closed' ? 'border-green-200 text-green-700' :
-                                trade.status === 'expired' ? 'border-orange-200 text-orange-700' :
-                                trade.status === 'assigned' ? 'border-purple-200 text-purple-700' :
-                                trade.status === 'exercised' ? 'border-blue-200 text-blue-700' :
-                                'border-gray-200 text-gray-700'
-                              }
-                            >
-                              {trade.status}
+                          </TableCell>
+                          
+                          <TableCell>
+                            <Badge variant={groupedTrade.isOption ? 'secondary' : 'default'}>
+                              {groupedTrade.isOption ? 'Option' : 'Stock'}
                             </Badge>
-                            {trade.holdingPeriod && (
-                              <div className="text-xs text-muted-foreground flex items-center gap-1">
-                                <Timer className="h-3 w-3" />
-                                {trade.holdingPeriod}d
+                          </TableCell>
+                          
+                          <TableCell>
+                            <div className="flex flex-col gap-1">
+                              <span className="text-sm font-medium">
+                                {groupedTrade.status === 'closed' ? 'Round Trip' : 'Position'}
+                              </span>
+                              <span className="text-xs text-muted-foreground">
+                                {groupedTrade.trades.filter(t => t.action === 'BUY').length} buys, {groupedTrade.trades.filter(t => t.action === 'SELL').length} sells
+                              </span>
+                            </div>
+                          </TableCell>
+                          
+                          <TableCell className="text-right">{groupedTrade.totalUnits}</TableCell>
+                          
+                          <TableCell className="text-right">
+                            <div>
+                              <div className="font-medium">{formatCurrency(groupedTrade.averageEntryPrice)}</div>
+                              {groupedTrade.averageExitPrice && (
+                                <div className="text-xs text-muted-foreground">
+                                  Exit: {formatCurrency(groupedTrade.averageExitPrice)}
+                                </div>
+                              )}
+                            </div>
+                          </TableCell>
+                          
+                          <TableCell className="text-right">
+                            {formatCurrency(groupedTrade.totalValue)}
+                          </TableCell>
+                        
+                          <TableCell className="text-right">
+                            {groupedTrade.realizedPnL !== undefined ? (
+                              <div className={groupedTrade.realizedPnL >= 0 ? 'text-green-600' : 'text-red-600'}>
+                                {formatCurrency(groupedTrade.realizedPnL)}
+                                {groupedTrade.averageEntryPrice && groupedTrade.averageExitPrice && (
+                                  <div className="text-xs">
+                                    {formatPercent(((groupedTrade.averageExitPrice - groupedTrade.averageEntryPrice) / groupedTrade.averageEntryPrice) * 100)}
+                                  </div>
+                                )}
                               </div>
+                            ) : (
+                              <span className="text-muted-foreground">-</span>
                             )}
-                          </div>
-                        </TableCell>
-                        
-                        <TableCell>
-                          {hasJournal ? (
-                            <Badge variant="outline" className="gap-1">
-                              <BookOpen className="h-3 w-3" />
-                              Noted
-                            </Badge>
-                          ) : (
-                            <Badge variant="outline" className="gap-1 text-muted-foreground">
-                              <FileText className="h-3 w-3" />
+                          </TableCell>
+                          
+                          <TableCell>
+                            <div className="flex items-center gap-1">
+                              <Badge 
+                                variant="outline" 
+                                className={
+                                  groupedTrade.status === 'closed' ? 'border-green-200 text-green-700' :
+                                  groupedTrade.status === 'partial' ? 'border-yellow-200 text-yellow-700' :
+                                  'border-gray-200 text-gray-700'
+                                }
+                              >
+                                {groupedTrade.status}
+                              </Badge>
+                              {groupedTrade.holdingPeriod && (
+                                <div className="text-xs text-muted-foreground flex items-center gap-1">
+                                  <Timer className="h-3 w-3" />
+                                  {groupedTrade.holdingPeriod}d
+                                </div>
+                              )}
+                            </div>
+                          </TableCell>
+                          
+                          <TableCell>
+                            {hasJournal ? (
+                              <Badge variant="outline" className="gap-1">
+                                <BookOpen className="h-3 w-3" />
+                                Noted
+                              </Badge>
+                            ) : (
+                              <Badge variant="outline" className="gap-1 text-muted-foreground">
+                                <FileText className="h-3 w-3" />
                               Add Note
                             </Badge>
                           )}
-                        </TableCell>
-                      </TableRow>
+                          </TableCell>
+                        </TableRow>
+                        
+                        {/* Expanded individual trades */}
+                        {isExpanded && groupedTrade.trades.map((trade, index) => (
+                          <TableRow 
+                            key={`${groupedTrade.id}-${trade.id}`}
+                            className="bg-muted/30 hover:bg-muted/50 cursor-pointer"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleJournalOpen(trade);
+                            }}
+                          >
+                            <TableCell className="pl-8">
+                              <div className="text-sm">
+                                <div className="font-medium">
+                                  {format(trade.executedAt, 'MMM dd, HH:mm')}
+                                </div>
+                                <div className="text-xs text-muted-foreground">
+                                  Trade #{index + 1}
+                                </div>
+                              </div>
+                            </TableCell>
+                            
+                            <TableCell>
+                              <span className="text-sm text-muted-foreground">
+                                {trade.action} {trade.units} @ {formatCurrency(trade.price)}
+                              </span>
+                            </TableCell>
+                            
+                            <TableCell>
+                              <Badge 
+                                variant="outline" 
+                                className={trade.action === 'BUY' ? 'border-green-200 text-green-700' : 'border-red-200 text-red-700'}
+                              >
+                                {trade.action}
+                              </Badge>
+                            </TableCell>
+                            
+                            <TableCell className="text-sm text-muted-foreground">
+                              Individual
+                            </TableCell>
+                            
+                            <TableCell className="text-right text-sm">
+                              {trade.units}
+                            </TableCell>
+                            
+                            <TableCell className="text-right text-sm">
+                              {formatCurrency(trade.price)}
+                            </TableCell>
+                            
+                            <TableCell className="text-right text-sm">
+                              {formatCurrency(trade.totalValue)}
+                            </TableCell>
+                            
+                            <TableCell className="text-right text-sm">
+                              {trade.realizedPnL !== undefined ? (
+                                <span className={trade.realizedPnL >= 0 ? 'text-green-600' : 'text-red-600'}>
+                                  {formatCurrency(trade.realizedPnL)}
+                                </span>
+                              ) : (
+                                <span className="text-muted-foreground">-</span>
+                              )}
+                            </TableCell>
+                            
+                            <TableCell className="text-sm">
+                              <Badge variant="outline">
+                                {trade.status}
+                              </Badge>
+                            </TableCell>
+                            
+                            <TableCell>
+                              {journalEntries?.some((entry: JournalEntry) => entry.tradeId === trade.id) ? (
+                                <Badge variant="outline" className="gap-1">
+                                  <BookOpen className="h-3 w-3" />
+                                  Note
+                                </Badge>
+                              ) : (
+                                <Badge variant="outline" className="gap-1 text-muted-foreground">
+                                  <FileText className="h-3 w-3" />
+                                  Add
+                                </Badge>
+                              )}
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </React.Fragment>
                     );
                   })}
                 </TableBody>
@@ -528,7 +884,7 @@ export default function EnhancedTradeJournalPage() {
                     </div>
                     <div>
                       <span className="text-muted-foreground">Quantity:</span>{' '}
-                      <span className="font-medium">{selectedTrade.quantity}</span>
+                      <span className="font-medium">{selectedTrade.units}</span>
                     </div>
                     <div>
                       <span className="text-muted-foreground">Price:</span>{' '}
@@ -584,7 +940,7 @@ export default function EnhancedTradeJournalPage() {
                     )}
                     <div>
                       <span className="text-muted-foreground">Commission:</span>{' '}
-                      <span className="font-medium">{formatCurrency(selectedTrade.commission)}</span>
+                      <span className="font-medium">{formatCurrency(selectedTrade.fee)}</span>
                     </div>
                     <div>
                       <span className="text-muted-foreground">Total Value:</span>{' '}
