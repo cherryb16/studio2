@@ -115,7 +115,7 @@ const DashboardPage = () => {
               {Array.isArray(accountList) &&
                 accountList.map((acc: any) => (
                   <option key={acc.id} value={acc.id}>
-                    {acc.name} ({acc.institution_name})
+                    {acc.name}
                   </option>
                 ))}
             </select>

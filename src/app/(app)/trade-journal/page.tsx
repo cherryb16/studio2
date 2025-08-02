@@ -3,6 +3,7 @@
 import React, { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useAuth } from '@/hooks/use-auth';
+import { useCachedAccounts } from '@/hooks/use-cached-accounts';
 import { 
   getEnhancedTrades, 
   getTradeSummaryStats,
@@ -132,43 +133,136 @@ function groupRelatedTrades(trades: EnhancedTrade[]): GroupedTrade[] {
     // Calculate aggregate values
     const buyTrades = sortedTrades.filter(t => t.action === 'BUY');
     const sellTrades = sortedTrades.filter(t => t.action === 'SELL');
+    const expiredTrades = sortedTrades.filter(t => t.status === 'expired');
     
     const totalBuyUnits = buyTrades.reduce((sum, t) => sum + t.units, 0);
     const totalSellUnits = sellTrades.reduce((sum, t) => sum + t.units, 0);
+    const totalExpiredUnits = expiredTrades.reduce((sum, t) => sum + t.units, 0);
+    
     const totalBuyValue = buyTrades.reduce((sum, t) => sum + (t.units * t.price), 0);
     const totalSellValue = sellTrades.reduce((sum, t) => sum + (t.units * t.price), 0);
     
-    const averageEntryPrice = totalBuyUnits > 0 ? totalBuyValue / totalBuyUnits : 0;
-    const averageExitPrice = totalSellUnits > 0 ? totalSellValue / totalSellUnits : undefined;
-    
     const totalFees = sortedTrades.reduce((sum, t) => sum + t.fee, 0);
-    const totalUnits = totalBuyUnits - totalSellUnits;
     
-    // Determine status
+    // Determine status and P&L based on position type
     let status: GroupedTrade['status'] = 'open';
     let realizedPnL: number | undefined;
+    let averageEntryPrice: number;
+    let averageExitPrice: number | undefined;
+    let totalUnits: number;
     
-    if (totalUnits === 0) {
-      status = 'closed';
-      // Calculate P&L for closed positions
-      const multiplier = sortedTrades[0]?.isOption ? 100 : 1;
-      if (averageExitPrice && averageEntryPrice) {
-        realizedPnL = (averageExitPrice - averageEntryPrice) * totalSellUnits * multiplier - totalFees;
+    const isOption = sortedTrades[0]?.isOption;
+    const multiplier = isOption ? 100 : 1;
+    
+    // For options, we need to consider different scenarios:
+    // 1. Sold options that expired = closed profitable position
+    // 2. Bought options that expired = closed losing position  
+    // 3. Bought then sold = normal long position
+    // 4. Sold then bought = covered call/cash secured put that was bought back
+    
+    if (isOption) {
+      // Options logic
+      if (sellTrades.length > 0 && buyTrades.length === 0) {
+        // Sold options only (covered calls, cash secured puts)
+        const totalSoldNotExpired = sellTrades.filter(t => t.status !== 'expired').length;
+        
+        if (totalSoldNotExpired === 0) {
+          // All sold options have expired - this is a closed profitable position
+          status = 'closed';
+          averageEntryPrice = 0; // Entry cost for selling options
+          averageExitPrice = totalSellValue / totalSellUnits; // Premium received
+          realizedPnL = totalSellValue * multiplier - totalFees; // Premium received minus fees
+          totalUnits = 0; // Position is closed
+        } else {
+          // Some options still open
+          status = 'open';
+          averageEntryPrice = 0;
+          averageExitPrice = totalSellValue / totalSellUnits;
+          totalUnits = totalSellUnits;
+          // No realized P&L until closed
+        }
+      } else if (buyTrades.length > 0 && sellTrades.length === 0) {
+        // Bought options only
+        if (totalExpiredUnits === totalBuyUnits) {
+          // All bought options expired worthless
+          status = 'closed';
+          averageEntryPrice = totalBuyValue / totalBuyUnits;
+          averageExitPrice = 0; // Expired worthless
+          realizedPnL = -totalBuyValue * multiplier - totalFees; // Loss = premium paid + fees
+          totalUnits = 0;
+        } else {
+          // Some options still open
+          status = 'open';
+          averageEntryPrice = totalBuyValue / totalBuyUnits;
+          totalUnits = totalBuyUnits;
+        }
+      } else if (buyTrades.length > 0 && sellTrades.length > 0) {
+        // Mixed trades - could be buying back sold options or normal long then short
+        totalUnits = Math.abs(totalBuyUnits - totalSellUnits);
+        
+        if (totalUnits === 0) {
+          status = 'closed';
+          // Determine which was the opening and closing action
+          const firstTrade = sortedTrades[0];
+          if (firstTrade.action === 'SELL') {
+            // Sold first, then bought back (covered call bought back)
+            averageEntryPrice = 0; // Cost to establish short position
+            averageExitPrice = totalSellValue / totalSellUnits; // Premium received
+            const costToBuyBack = totalBuyValue * multiplier;
+            const premiumReceived = totalSellValue * multiplier;
+            realizedPnL = premiumReceived - costToBuyBack - totalFees;
+          } else {
+            // Bought first, then sold (normal long position)
+            averageEntryPrice = totalBuyValue / totalBuyUnits;
+            averageExitPrice = totalSellValue / totalSellUnits;
+            realizedPnL = (averageExitPrice - averageEntryPrice) * Math.min(totalBuyUnits, totalSellUnits) * multiplier - totalFees;
+          }
+        } else {
+          status = 'partial';
+          averageEntryPrice = totalBuyUnits > 0 ? totalBuyValue / totalBuyUnits : 0;
+          averageExitPrice = totalSellUnits > 0 ? totalSellValue / totalSellUnits : undefined;
+        }
+      } else {
+        // Fallback
+        totalUnits = 0;
+        averageEntryPrice = 0;
       }
-    } else if (totalSellUnits > 0) {
-      status = 'partial';
-      // Calculate partial P&L
-      const multiplier = sortedTrades[0]?.isOption ? 100 : 1;
-      if (averageExitPrice && averageEntryPrice) {
-        realizedPnL = (averageExitPrice - averageEntryPrice) * totalSellUnits * multiplier - totalFees;
+    } else {
+      // Stock logic (existing logic)
+      totalUnits = totalBuyUnits - totalSellUnits;
+      averageEntryPrice = totalBuyUnits > 0 ? totalBuyValue / totalBuyUnits : 0;
+      averageExitPrice = totalSellUnits > 0 ? totalSellValue / totalSellUnits : undefined;
+      
+      if (totalUnits === 0) {
+        status = 'closed';
+        if (averageExitPrice && averageEntryPrice) {
+          realizedPnL = (averageExitPrice - averageEntryPrice) * totalSellUnits - totalFees;
+        }
+      } else if (totalSellUnits > 0) {
+        status = 'partial';
+        if (averageExitPrice && averageEntryPrice) {
+          realizedPnL = (averageExitPrice - averageEntryPrice) * totalSellUnits - totalFees;
+        }
       }
     }
     
     const firstTrade = sortedTrades[0];
     const lastTrade = sortedTrades[sortedTrades.length - 1];
-    const holdingPeriod = status === 'closed' && buyTrades.length > 0 && sellTrades.length > 0
-      ? Math.floor((lastTrade.executedAt.getTime() - firstTrade.executedAt.getTime()) / (1000 * 60 * 60 * 24))
-      : undefined;
+    
+    // Calculate holding period for closed positions
+    let holdingPeriod: number | undefined;
+    if (status === 'closed') {
+      if (isOption && sellTrades.length > 0 && buyTrades.length === 0) {
+        // For sold options that expired, holding period is from sell to expiration
+        const lastExpiredTrade = sortedTrades.filter(t => t.status === 'expired').pop();
+        if (lastExpiredTrade) {
+          holdingPeriod = Math.floor((lastExpiredTrade.executedAt.getTime() - firstTrade.executedAt.getTime()) / (1000 * 60 * 60 * 24));
+        }
+      } else if (sortedTrades.length > 1) {
+        // For other closed positions, use first to last trade
+        holdingPeriod = Math.floor((lastTrade.executedAt.getTime() - firstTrade.executedAt.getTime()) / (1000 * 60 * 60 * 24));
+      }
+    }
     
     groupedTrades.push({
       id: groupKey,
@@ -195,6 +289,24 @@ function groupRelatedTrades(trades: EnhancedTrade[]): GroupedTrade[] {
 
 // Helper function to get the start date for a selected period
 const getStartDate = (period: 'day' | 'week' | 'month' | 'year'): Date => {
+  const date = new Date();
+  switch (period) {
+    case 'day':
+      date.setDate(date.getDate() - 1);
+      break;
+    case 'week':
+      date.setDate(date.getDate() - 7);
+      break;
+    case 'month':
+      date.setMonth(date.getMonth() - 1);
+      break;
+    case 'year':
+      date.setFullYear(date.getFullYear() - 1);
+      break;
+  }
+  return date;
+};
+
 export default function EnhancedTradeJournalPage() {
   const { user } = useAuth();
   const [selectedPeriod, setSelectedPeriod] = useState<'day' | 'week' | 'month' | 'year' | 'all'>('month');
@@ -230,26 +342,8 @@ export default function EnhancedTradeJournalPage() {
     enabled: !!user?.uid,
   });
 
-  // Get user accounts
-  const { data: accounts, isLoading: accountsLoading } = useQuery<SnapTradeAccount[] | undefined>({ // Explicitly type the data and get loading state, allowing undefined initially
-    queryKey: ['snaptradeAccounts', credentials?.snaptradeUserId, credentials?.userSecret], // Make queryKey reactive to credentials
-    queryFn: async () => {
-      if (!credentials?.snaptradeUserId || !credentials?.userSecret) return [];
-      try {
-        const { snaptrade } = await import('@/app/actions/snaptrade-client');
-        const response = await snaptrade.accountInformation.listUserAccounts({
-          userId: credentials.snaptradeUserId,
-          userSecret: credentials.userSecret,
-        });
-        console.log('Fetched accounts:', response.data); // Debug log
-        return response.data as SnapTradeAccount[] || []; // Explicitly cast and ensure response.data is treated as SnapTradeAccount[]
-      } catch (error) {
-        console.error('Error fetching accounts:', error);
-        return [];
-      }
-    },
-    enabled: !!credentials?.snaptradeUserId && !!credentials?.userSecret,
-  });
+  // Get user accounts using cached hook
+  const { accounts, isLoading: accountsLoading, error: accountsError } = useCachedAccounts();
 
   // Fetch trade activities
   const { data: trades, isLoading: tradesLoading } = useQuery({
@@ -390,6 +484,202 @@ export default function EnhancedTradeJournalPage() {
     }
   };
 
+  const tradesArray = Array.isArray(trades) ? trades : [];
+  const hasError = trades && 'error' in trades;
+
+  // Use cached accounts directly - no need for fallback logic
+  const effectiveAccounts = accounts;
+
+  // Calculate filtered stats and grouped trades in a single useMemo to prevent dependency issues
+  // This must be called before any early returns to maintain hook order
+  const { filteredGroupedTrades, filteredStats } = React.useMemo(() => {
+    // If we don't have the required data, return empty values
+    if (!user || !credentials || !tradesArray.length) {
+      return { 
+        filteredGroupedTrades: [], 
+        filteredStats: null 
+      };
+    }
+    // Filter trades based on selected filters - but for P&L filtering, we need to work with grouped trades
+    const accountAndTypeFilteredTrades = tradesArray.filter((trade) => {
+      // Account filter
+      if (selectedAccount !== 'all' && trade.accountId !== selectedAccount) {
+        return false;
+      }
+
+      // Type filter
+      if (selectedType === 'stocks' && trade.isOption) {
+        return false;
+      }
+      if (selectedType === 'options' && !trade.isOption) {
+        return false;
+      }
+
+      return true;
+    });
+
+    // Debug: log filtering results
+    console.log('Account filtering debug:', {
+      selectedAccount,
+      totalTrades: tradesArray.length,
+      filteredTrades: accountAndTypeFilteredTrades.length,
+      sampleTradeAccountIds: tradesArray.slice(0, 3).map(t => t.accountId),
+      availableAccountIds: Array.isArray(effectiveAccounts) ? effectiveAccounts.map(a => a.id) : []
+    });
+
+    // Group related trades together first
+    const allGroupedTrades = groupRelatedTrades(accountAndTypeFilteredTrades);
+
+    // Now apply P&L filtering to grouped trades (complete positions)
+    const filteredGroupedTrades = allGroupedTrades.filter((groupedTrade) => {
+      // P&L filter - now works on complete positions
+      if (selectedPnL === 'wins' && (groupedTrade.realizedPnL === undefined || groupedTrade.realizedPnL <= 0)) {
+        return false;
+      }
+      if (selectedPnL === 'losses' && (groupedTrade.realizedPnL === undefined || groupedTrade.realizedPnL >= 0)) {
+        return false;
+      }
+      if (selectedPnL === 'closed' && groupedTrade.status !== 'closed') {
+        return false;
+      }
+      if (selectedPnL === 'open' && groupedTrade.status !== 'open' && groupedTrade.status !== 'partial') {
+        return false;
+      }
+
+      return true;
+    });
+
+    // Calculate filtered stats based on filtered grouped trades
+    let filteredStats = null;
+    
+    if (stats && !('error' in stats)) {
+      // Extract individual trades from filtered grouped trades for calculations
+      const filteredTrades = filteredGroupedTrades.flatMap(group => group.trades);
+      
+      // Use grouped trades for main statistics (each complete position counts as one)
+      const closedPositions = filteredGroupedTrades.filter(g => g.status === 'closed');
+      const winningPositions = filteredGroupedTrades.filter(g => g.realizedPnL && g.realizedPnL > 0);
+      const losingPositions = filteredGroupedTrades.filter(g => g.realizedPnL && g.realizedPnL < 0);
+      
+      const totalRealizedPnL = filteredGroupedTrades.reduce((sum, g) => sum + (g.realizedPnL || 0), 0);
+      const totalFees = filteredGroupedTrades.reduce((sum, g) => sum + g.totalFees, 0);
+      
+      const winRate = closedPositions.length > 0 ? (winningPositions.length / closedPositions.length) * 100 : 0;
+      
+      let totalWins = 0;
+      let totalLosses = 0;
+      
+      for (const position of filteredGroupedTrades) {
+        if (position.realizedPnL && position.realizedPnL > 0) {
+          totalWins += position.realizedPnL;
+        } else if (position.realizedPnL && position.realizedPnL < 0) {
+          totalLosses += Math.abs(position.realizedPnL);
+        }
+      }
+      
+      const avgWin = winningPositions.length > 0 ? totalWins / winningPositions.length : 0;
+      const avgLoss = losingPositions.length > 0 ? totalLosses / losingPositions.length : 0;
+      const profitFactor = totalLosses > 0 ? totalWins / totalLosses : 0;
+      
+      // Detailed breakdowns for expandable cards
+      const stockPositions = filteredGroupedTrades.filter(g => !g.isOption);
+      const optionPositions = filteredGroupedTrades.filter(g => g.isOption);
+      
+      // Find largest win and loss from positions
+      const largestWin = winningPositions.reduce<typeof filteredGroupedTrades[0] | null>((max, position) => {
+        return position.realizedPnL !== undefined && (max === null || position.realizedPnL > (max.realizedPnL ?? -Infinity)) ? position : max;
+      }, null);
+      const largestLoss = losingPositions.reduce<typeof filteredGroupedTrades[0] | null>((min, position) => {
+        return position.realizedPnL !== undefined && (min === null || position.realizedPnL < (min.realizedPnL ?? Infinity)) ? position : min;
+      }, null);
+
+      // Breakdown by account using individual trades
+      const accountBreakdown = filteredTrades.reduce((acc, trade) => {
+        const accountName = Array.isArray(effectiveAccounts) 
+          ? effectiveAccounts.find(a => a.id === trade.accountId)?.name || `Account ${trade.accountId.slice(-4)}`
+          : `Account ${trade.accountId.slice(-4)}`;
+        if (!acc[accountName]) {
+          acc[accountName] = { trades: 0, pnl: 0, fees: 0 };
+        }
+        acc[accountName].trades++;
+        acc[accountName].pnl += trade.realizedPnL || 0;
+        acc[accountName].fees += trade.fee;
+        return acc;
+      }, {} as Record<string, { trades: number; pnl: number; fees: number }>);
+
+      // Breakdown by symbol using positions
+      const symbolBreakdown = filteredGroupedTrades.reduce((acc, position) => {
+        if (!acc[position.symbol]) {
+          acc[position.symbol] = { trades: 0, pnl: 0, fees: 0 };
+        }
+        acc[position.symbol].trades++;
+        acc[position.symbol].pnl += position.realizedPnL || 0;
+        acc[position.symbol].fees += position.totalFees;
+        return acc;
+      }, {} as Record<string, { trades: number; pnl: number; fees: number }>);
+
+      filteredStats = {
+        totalTrades: filteredTrades.length,
+        closedTrades: closedPositions.length,
+        winningTrades: winningPositions.length,
+        losingTrades: losingPositions.length,
+        totalRealizedPnL,
+        totalFees,
+        winRate,
+        avgWin,
+        avgLoss,
+        profitFactor,
+        optionTrades: optionPositions.length,
+        stockTrades: stockPositions.length,
+        largestWin: largestWin ? {
+          symbol: largestWin.symbol,
+          realizedPnL: largestWin.realizedPnL
+        } : null,
+        largestLoss: largestLoss ? {
+          symbol: largestLoss.symbol,
+          realizedPnL: largestLoss.realizedPnL
+        } : null,
+        accountBreakdown,
+        symbolBreakdown: Object.entries(symbolBreakdown)
+          .sort(([,a], [,b]) => b.trades - a.trades)
+          .slice(0, 5) // Top 5 most traded symbols
+          .reduce((acc, [symbol, data]) => ({ ...acc, [symbol]: data }), {})
+      };
+    }
+
+    return { filteredGroupedTrades, filteredStats };
+  }, [tradesArray, selectedAccount, selectedType, selectedPnL, stats, effectiveAccounts]);
+
+  // Debug logging
+  console.log('Accounts state:', { 
+    accounts, 
+    accountsLoading, 
+    accountsError,
+    effectiveAccounts,
+    hasAccounts: Array.isArray(accounts) && accounts.length > 0,
+    hasEffectiveAccounts: Array.isArray(effectiveAccounts) && effectiveAccounts.length > 0,
+    accountsLength: Array.isArray(accounts) ? accounts.length : 0,
+    effectiveAccountsLength: Array.isArray(effectiveAccounts) ? effectiveAccounts.length : 0,
+    accountsType: typeof accounts,
+    isArray: Array.isArray(accounts)
+  });
+  
+  console.log('Credentials state:', {
+    hasCredentials: !!credentials,
+    hasUserId: !!credentials?.snaptradeUserId,
+    hasUserSecret: !!credentials?.userSecret,
+    userId: credentials?.snaptradeUserId ? `${credentials.snaptradeUserId.substring(0, 8)}...` : 'missing',
+    queryEnabled: !!credentials?.snaptradeUserId && !!credentials?.userSecret
+  });
+  
+  if (Array.isArray(accounts) && accounts.length > 0) {
+    console.log('Accounts structure:', accounts[0]);
+    console.log('All accounts:', accounts);
+  } else {
+    console.log('No accounts found or accounts is empty:', accounts);
+  }
+
+  // Early return after all hooks have been called
   if (!user || !credentials) {
     return (
       <Card className="max-w-md mx-auto mt-32">
@@ -407,139 +697,6 @@ export default function EnhancedTradeJournalPage() {
       </Card>
     );
   }
-
-  const tradesArray = Array.isArray(trades) ? trades : [];
-  const hasError = trades && 'error' in trades;
-
-  // Debug logging
-  if (accounts && accounts.length > 0) {
-    console.log('Accounts structure:', accounts[0]);
-    console.log('All accounts:', accounts);
-  } else {
-    console.log('No accounts found or accounts is empty:', accounts);
-  }
-
-  // Filter trades based on selected filters
-  const filteredTrades = tradesArray.filter((trade) => {
-    // Account filter
-    if (selectedAccount !== 'all' && trade.accountId !== selectedAccount) {
-      return false;
-    }
-
-    // Type filter
-    if (selectedType === 'stocks' && trade.isOption) {
-      return false;
-    }
-    if (selectedType === 'options' && !trade.isOption) {
-      return false;
-    }
-
-    // P&L filter
-    if (selectedPnL === 'wins' && (trade.realizedPnL === undefined || trade.realizedPnL <= 0)) {
-      return false;
-    }
-    if (selectedPnL === 'losses' && (trade.realizedPnL === undefined || trade.realizedPnL >= 0)) {
-      return false;
-    }
-    if (selectedPnL === 'closed' && trade.status !== 'closed') {
-      return false;
-    }
-    if (selectedPnL === 'open' && trade.status !== 'open') {
-      return false;
-    }
-
-    return true;
-  });
-
-  // Group related trades together
-  const groupedTrades = groupRelatedTrades(filteredTrades);
-
-  // Calculate filtered stats based on selected filters
-  const filteredStats = React.useMemo(() => {
-    // If stats is not available or has an error, return null or a default state
-    if (!stats || 'error' in stats) return null;
-    
-    const closedFilteredTrades = filteredTrades.filter(t => t.status === 'closed');
-    const winningFilteredTrades = filteredTrades.filter(t => t.realizedPnL && t.realizedPnL > 0);
-    const losingFilteredTrades = filteredTrades.filter(t => t.realizedPnL && t.realizedPnL < 0);
-    
-    const totalRealizedPnL = filteredTrades.reduce((sum, t) => sum + (t.realizedPnL || 0), 0);
-    const totalFees = filteredTrades.reduce((sum, t) => sum + t.fee, 0);
-    
-    const winRate = closedFilteredTrades.length > 0 ? (winningFilteredTrades.length / closedFilteredTrades.length) * 100 : 0;
-    
-    let totalWins = 0;
-    let totalLosses = 0;
-    
-    for (const trade of filteredTrades) {
-      if (trade.realizedPnL && trade.realizedPnL > 0) {
-        totalWins += trade.realizedPnL;
-      } else if (trade.realizedPnL && trade.realizedPnL < 0) {
-        totalLosses += Math.abs(trade.realizedPnL);
-      }
-    }
-    
-    const avgWin = winningFilteredTrades.length > 0 ? totalWins / winningFilteredTrades.length : 0;
-    const profitFactor = totalLosses > 0 ? totalWins / totalLosses : 0;
-    
-    // Detailed breakdowns for expandable cards
-    const stockTrades = filteredTrades.filter(t => !t.isOption);
-    const optionTrades = filteredTrades.filter(t => t.isOption);
-    const avgLoss = losingFilteredTrades.length > 0 ? totalLosses / losingFilteredTrades.length : 0;
-    
-    // Find largest win and loss
-    const largestWin = winningFilteredTrades.reduce<EnhancedTrade | null>((max, trade) => {
-      return trade.realizedPnL !== undefined && (max === null || trade.realizedPnL > (max.realizedPnL ?? -Infinity)) ? trade : max;
-    }, null);
-    const largestLoss = losingFilteredTrades.reduce<EnhancedTrade | null>((min, trade) => {
-      return trade.realizedPnL !== undefined && (min === null || trade.realizedPnL < (min.realizedPnL ?? Infinity)) ? trade : min;
-    }, null);
-
-    // Breakdown by account
-    const accountBreakdown = filteredTrades.reduce((acc, trade) => {
-      const accountName = accounts?.find(a => a.id === trade.accountId)?.name || `Account ${trade.accountId.slice(-4)}`;
-      if (!acc[accountName]) {
-        acc[accountName] = { trades: 0, pnl: 0, fees: 0 };
-      }
-      acc[accountName].trades++;
-      acc[accountName].pnl += trade.realizedPnL || 0;
-      acc[accountName].fees += trade.fee;
-      return acc;
-    }, {} as Record<string, { trades: number; pnl: number; fees: number }>);
-
-    // Breakdown by symbol
-    const symbolBreakdown = filteredTrades.reduce((acc, trade) => {
-      if (!acc[trade.symbol]) {
-        acc[trade.symbol] = { trades: 0, pnl: 0, fees: 0 };
-      }
-      acc[trade.symbol].trades++;
-      acc[trade.symbol].pnl += trade.realizedPnL || 0;
-      acc[trade.symbol].fees += trade.fee;
-      return acc;
-    }, {} as Record<string, { trades: number; pnl: number; fees: number }>);
-
-    return {
-      totalTrades: filteredTrades.length,
-      closedTrades: closedFilteredTrades.length,
-      winningTrades: winningFilteredTrades.length,
-      losingTrades: losingFilteredTrades.length,
-      totalRealizedPnL,
-      totalFees,
-      winRate,
-      avgWin,
-      avgLoss,
-      profitFactor,
-      optionTrades: optionTrades.length,
-      stockTrades: stockTrades.length,
-      largestWin,
-      largestLoss,
-      accountBreakdown,
-      symbolBreakdown: Object.entries(symbolBreakdown)
-        .sort(([,a], [,b]) => b.trades - a.trades)
-        .slice(0, 5) // Top 5 most traded symbols
-        .reduce((acc, [symbol, data]) => ({ ...acc, [symbol]: data }), {})
-    };
-  }, [filteredTrades, stats, accounts]); // Added accounts dependency
 
   return (
     <div className="space-y-6">
@@ -743,19 +900,22 @@ export default function EnhancedTradeJournalPage() {
                   <div className="text-xs">
                     <div className="font-medium mb-2">Top Symbols:</div>
                     <div className="space-y-1">
-                      {Object.entries(filteredStats.symbolBreakdown).map(([symbol, data]) => (
-                        <div key={symbol} className="flex justify-between items-center">
-                          <span className="font-medium">{symbol}</span>
-                          <div className="text-right">
-                            <div className="flex items-center gap-2">
-                              <span>{data.trades} trades</span>
-                              <span className={data.pnl >= 0 ? 'text-green-600' : 'text-red-600'}>
-                                {formatCurrency(data.pnl)}
-                              </span>
+                      {Object.entries(filteredStats.symbolBreakdown).map(([symbol, data]) => {
+                        const symbolData = data as { trades: number; pnl: number; fees: number };
+                        return (
+                          <div key={symbol} className="flex justify-between items-center">
+                            <span className="font-medium">{symbol}</span>
+                            <div className="text-right">
+                              <div className="flex items-center gap-2">
+                                <span>{symbolData.trades} trades</span>
+                                <span className={symbolData.pnl >= 0 ? 'text-green-600' : 'text-red-600'}>
+                                  {formatCurrency(symbolData.pnl)}
+                                </span>
+                              </div>
                             </div>
                           </div>
-                        </div>
-                      ))}
+                        );
+                      })}
                       {Object.keys(filteredStats.symbolBreakdown).length === 0 && (
                         <div className="text-muted-foreground">No closed trades</div>
                       )}
@@ -786,36 +946,22 @@ export default function EnhancedTradeJournalPage() {
       <div className="flex flex-wrap gap-4 items-center">
         <div className="flex items-center gap-2">
           <label className="text-sm font-medium">Account:</label>
-          <Select value={selectedAccount} onValueChange={setSelectedAccount}>
-            <SelectTrigger className="w-[180px]">
-              <SelectValue placeholder="All accounts" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All accounts</SelectItem>
-              {accountsLoading && (
-                <SelectItem value="loading" disabled>Loading accounts...</SelectItem>
-              )}
-              {accounts && accounts.length > 0 && accounts.map((account) => {
-                const accountName: string =
-                  account.name ||
-                  account.account_name ||
-                  account.nickname ||
-                  account.institution_name ||
-                  account.number ||
-                  `Account ${account.id.slice(-4)}` ||
-                  'Unknown Account';
-
-                return (
-                  <SelectItem key={account.id} value={account.id}>
-                    {accountName}
-                  </SelectItem>
-                );
-              })}
-              {!accountsLoading && (!accounts || accounts.length === 0) && (
-                <SelectItem value="no-accounts" disabled>No accounts linked</SelectItem>
-              )}
-            </SelectContent>
-          </Select> {/* ✅ Only this closing tag is needed */}
+          <select
+            id="accountSelect"
+            title="Select Account"
+            aria-label="Select Account"
+            value={selectedAccount || 'all'}
+            onChange={e => setSelectedAccount(e.target.value === 'all' ? 'all' : e.target.value)}
+            className="border rounded p-2 w-[180px]"
+          >
+            <option value="all">All Accounts</option>
+            {Array.isArray(effectiveAccounts) &&
+              effectiveAccounts.map((acc: any) => (
+                <option key={acc.id} value={acc.id}>
+                  {acc.name}
+                </option>
+              ))}
+          </select>
         </div>
 
         <div className="flex items-center gap-2">
@@ -849,7 +995,7 @@ export default function EnhancedTradeJournalPage() {
         </div>
 
         <div className="text-sm text-muted-foreground">
-          Showing {groupedTrades.length} positions ({filteredTrades.length} individual trades)
+          Showing {filteredGroupedTrades.length} positions ({filteredGroupedTrades.flatMap(g => g.trades).length} individual trades)
         </div>
       </div>
 
@@ -870,7 +1016,7 @@ export default function EnhancedTradeJournalPage() {
             <p className="text-center text-muted-foreground py-8">
               Error loading trades. Please try again.
             </p>
-          ) : groupedTrades.length === 0 ? (
+          ) : filteredGroupedTrades.length === 0 ? (
             <p className="text-center text-muted-foreground py-8">
               {tradesArray.length === 0 ? 'No trades found for the selected period.' : 'No trades match the selected filters.'}
             </p>
@@ -892,7 +1038,7 @@ export default function EnhancedTradeJournalPage() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {groupedTrades.map((groupedTrade) => {
+                  {filteredGroupedTrades.map((groupedTrade) => {
                     const isExpanded = expandedTrades.has(groupedTrade.id);
                     const hasJournal = groupedTrade.trades.some(trade => 
                       journalEntries?.some((entry: JournalEntry) => entry.tradeId === trade.id)
