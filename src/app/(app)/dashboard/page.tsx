@@ -80,7 +80,7 @@ const DashboardPage = () => {
       <Card className="max-w-md mx-auto mt-32">
         <CardHeader><CardTitle>Connect Brokerage</CardTitle></CardHeader>
         <CardContent>
-          <Link href="/settings"><Button>Connect Account</Button></Link>
+          <Link href="/settings"><Button>Connect Brokerage</Button></Link>
         </CardContent>
       </Card>
     );
