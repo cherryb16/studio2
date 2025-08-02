@@ -13,7 +13,7 @@ import {
 } from 'firebase/auth';
 import { auth } from '@/lib/firebase';
 import { useRouter, usePathname } from 'next/navigation';
-import { doc, setDoc, getFirestore } from 'firebase/firestore';
+import { doc, setDoc, getFirestore, getDoc } from 'firebase/firestore';
 import { UserData } from '@/lib/types';
 
 export interface AuthContextType {
@@ -57,6 +57,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const provider = new GoogleAuthProvider();
     const result = await signInWithPopup(auth, provider);
     if (result.user) {
+      const userRef = doc(db, 'users', result.user.uid);
+      const userSnap = await getDoc(userRef);
+      if (!userSnap.exists()) {
+        const [firstName = '', ...lastNameParts] = result.user.displayName?.split(' ') ?? [];
+        await saveUserData(result.user, {
+          firstName,
+          lastName: lastNameParts.join(' '),
+          dob: 0,
+          tradingExperience: '',
+        });
+      }
       console.log("Google user signed in with popup:", result.user.email);
     }
     return result;
