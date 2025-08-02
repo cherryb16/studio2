@@ -90,6 +90,16 @@ interface GroupedTrade {
   trades: EnhancedTrade[]; // Individual buy/sell trades
 }
 
+interface SnapTradeAccount {
+  id: string;
+  name?: string; // Optional, as you have fallback logic
+  account_name?: string;
+  nickname?: string;
+  institution_name?: string;
+  number?: string;
+  // Add other properties if needed based on SnapTrade API docs
+}
+
 // Function to group related trades
 function groupRelatedTrades(trades: EnhancedTrade[]): GroupedTrade[] {
   const groups = new Map<string, EnhancedTrade[]>();
@@ -217,7 +227,7 @@ export default function EnhancedTradeJournalPage() {
   });
 
   // Get user accounts
-  const { data: accounts } = useQuery({
+  const { data: accounts } = useQuery<SnapTradeAccount[]>({ // Explicitly type the data
     queryKey: ['snaptradeAccounts', credentials?.snaptradeUserId, credentials?.userSecret],
     queryFn: async () => {
       if (!credentials?.snaptradeUserId || !credentials?.userSecret) return [];
@@ -228,7 +238,7 @@ export default function EnhancedTradeJournalPage() {
           userSecret: credentials.userSecret,
         });
         console.log('Fetched accounts:', response.data);
-        return response.data || [];
+      return response.data as SnapTradeAccount[] || []; // Ensure response.data is treated as SnapTradeAccount[]
       } catch (error) {
         console.error('Error fetching accounts:', error);
         return [];
@@ -464,6 +474,7 @@ export default function EnhancedTradeJournalPage() {
 
   // Calculate filtered stats based on selected filters
   const filteredStats = React.useMemo(() => {
+    // If stats is not available or has an error, return null or a default state
     if (!stats || 'error' in stats) return null;
     
     const closedFilteredTrades = filteredTrades.filter(t => t.status === 'closed');
@@ -546,7 +557,7 @@ export default function EnhancedTradeJournalPage() {
         .slice(0, 5) // Top 5 most traded symbols
         .reduce((acc, [symbol, data]) => ({ ...acc, [symbol]: data }), {})
     };
-  }, [filteredTrades, stats]);
+  }, [filteredTrades, stats, accounts]); // Added accounts dependency
 
   return (
     <div className="space-y-6">
