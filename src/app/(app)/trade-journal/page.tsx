@@ -190,19 +190,18 @@ function groupRelatedTrades(trades: EnhancedTrade[]): GroupedTrade[] {
     });
   }
   
-  // Sort grouped trades by most recent activity
   return groupedTrades.sort((a, b) => b.executedAt.getTime() - a.executedAt.getTime());
 }
 
+// Helper function to get the start date for a selected period
+const getStartDate = (period: 'day' | 'week' | 'month' | 'year'): Date => {
 export default function EnhancedTradeJournalPage() {
   const { user } = useAuth();
   const [selectedPeriod, setSelectedPeriod] = useState<'day' | 'week' | 'month' | 'year' | 'all'>('month');
   const [selectedTrade, setSelectedTrade] = useState<EnhancedTrade | null>(null);
   const [isJournalOpen, setIsJournalOpen] = useState(false);
   const [journalNotes, setJournalNotes] = useState('');
-  const [loadingPrompts, setLoadingPrompts] = useState(false);
-  const [aiPrompts, setAiPrompts] = useState<string[]>([]);
-  
+
   // Filter states
   const [selectedAccount, setSelectedAccount] = useState<string>('all');
   const [selectedType, setSelectedType] = useState<'all' | 'stocks' | 'options'>('all');
@@ -213,6 +212,11 @@ export default function EnhancedTradeJournalPage() {
   
   // Expanded stats cards state
   const [expandedStatsCards, setExpandedStatsCards] = useState<Set<string>>(new Set());
+
+  // AI Prompt State
+  const [loadingPrompts, setLoadingPrompts] = useState(false);
+  const [aiPrompts, setAiPrompts] = useState<string[]>([]);
+
 
   // Get SnapTrade credentials
   const { data: credentials } = useQuery({
@@ -227,8 +231,8 @@ export default function EnhancedTradeJournalPage() {
   });
 
   // Get user accounts
-  const { data: accounts } = useQuery<SnapTradeAccount[]>({ // Explicitly type the data
-    queryKey: ['snaptradeAccounts', credentials?.snaptradeUserId, credentials?.userSecret],
+  const { data: accounts, isLoading: accountsLoading } = useQuery<SnapTradeAccount[] | undefined>({ // Explicitly type the data and get loading state, allowing undefined initially
+    queryKey: ['snaptradeAccounts', credentials?.snaptradeUserId, credentials?.userSecret], // Make queryKey reactive to credentials
     queryFn: async () => {
       if (!credentials?.snaptradeUserId || !credentials?.userSecret) return [];
       try {
@@ -237,8 +241,8 @@ export default function EnhancedTradeJournalPage() {
           userId: credentials.snaptradeUserId,
           userSecret: credentials.userSecret,
         });
-        console.log('Fetched accounts:', response.data);
-      return response.data as SnapTradeAccount[] || []; // Ensure response.data is treated as SnapTradeAccount[]
+        console.log('Fetched accounts:', response.data); // Debug log
+        return response.data as SnapTradeAccount[] || []; // Explicitly cast and ensure response.data is treated as SnapTradeAccount[]
       } catch (error) {
         console.error('Error fetching accounts:', error);
         return [];
@@ -275,60 +279,38 @@ export default function EnhancedTradeJournalPage() {
     queryFn: async () => {
       const stored = localStorage.getItem('journalEntries');
       return stored ? JSON.parse(stored) : [];
-    },
+ },
   });
 
-  const getStartDate = (period: 'day' | 'week' | 'month' | 'year'): Date => {
-    const date = new Date();
-    switch (period) {
-      case 'day':
-        date.setDate(date.getDate() - 1);
-        break;
-      case 'week':
-        date.setDate(date.getDate() - 7);
-        break;
-      case 'month':
-        date.setMonth(date.getMonth() - 1);
-        break;
-      case 'year':
-        date.setFullYear(date.getFullYear() - 1);
-        break;
-    }
-    return date;
-  };
-
   const handleJournalOpen = async (trade: EnhancedTrade) => {
+    setLoadingPrompts(true);
+    let result; // Declare result outside the try block
+  
     setSelectedTrade(trade);
     setIsJournalOpen(true);
-    
-    // Load existing journal entry if it exists
-    const existingEntry = journalEntries?.find((entry: JournalEntry) => entry.tradeId === trade.id);
-    setJournalNotes(existingEntry?.notes || '');
-    
-    // Get AI prompts for closed trades
-    if (!existingEntry && trade.status === 'closed') {
-      setLoadingPrompts(true);
-      try {
-        const tradeForPrompts: Trade = {
-          id: trade.id,
-          instrument: trade.instrument,
-          date: format(trade.executedAt, 'yyyy-MM-dd'),
-          entryPrice: trade.entryPrice || trade.price,
-          exitPrice: trade.exitPrice || trade.price,
-          position: 'long', // Simplified for now
-          pnl: trade.realizedPnL || 0,
-          status: trade.realizedPnL ? (trade.realizedPnL > 0 ? 'win' : trade.realizedPnL < 0 ? 'loss' : 'breakeven') : 'breakeven'
-        };
-        
-        const result = await getJournalPrompts(tradeForPrompts);
-        if (result.prompts) {
-          setAiPrompts(result.prompts);
-        }
-      } catch (error) {
-        console.error('Error getting AI prompts:', error);
-      } finally {
-        setLoadingPrompts(false);
-      }
+  
+    // Fetch AI prompts when the dialog opens for a trade
+    try {
+      // Create a Trade object with required properties for the API call
+      const tradeForPrompts: Trade = {
+        id: trade.id, // Assuming EnhancedTrade has an id
+        instrument: trade.instrument,
+        date: format(trade.executedAt, 'yyyy-MM-dd'), // Format the date
+        entryPrice: trade.entryPrice || trade.price, // Use price as fallback
+        exitPrice: trade.exitPrice || trade.price,   // Use price as fallback
+        position: trade.action === 'BUY' ? 'long' : 'short', // Map BUY/SELL to long/short
+        pnl: trade.realizedPnL ?? 0, // Use 0 if realizedPnL is undefined
+        status: trade.status === 'closed' ? (trade.realizedPnL !== undefined ? (trade.realizedPnL > 0 ? 'win' : trade.realizedPnL < 0 ? 'loss' : 'breakeven') : 'breakeven') : 'breakeven' // Determine win/loss/breakeven based on closed status and P&L
+      };
+  
+      result = await getJournalPrompts(tradeForPrompts); // Assign to the declared result
+  
+      // Check if prompts is defined before setting state, provide empty array if undefined
+      setAiPrompts(result?.prompts || []);
+    } catch (error) {
+      console.error('Error getting AI prompts:', error);
+    } finally {
+      setLoadingPrompts(false);
     }
   };
 
@@ -810,30 +792,30 @@ export default function EnhancedTradeJournalPage() {
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">All accounts</SelectItem>
-              {accounts && accounts.length > 0 ? accounts.map((account: any) => {
-                // Try different possible name fields from the SnapTrade API
-                const accountName = account.name || 
-                                  account.account_name || 
-                                  account.nickname || 
-                                  account.institution_name || 
-                                  account.number || 
-                                  `Account ${account.id.slice(-4)}` || 
-                                  'Unknown Account';
-                
-                console.log('Rendering account:', { id: account.id, name: accountName, fullAccount: account });
-                
+              {accountsLoading && (
+                <SelectItem value="loading" disabled>Loading accounts...</SelectItem>
+              )}
+              {accounts && accounts.length > 0 && accounts.map((account) => {
+                const accountName: string =
+                  account.name ||
+                  account.account_name ||
+                  account.nickname ||
+                  account.institution_name ||
+                  account.number ||
+                  `Account ${account.id.slice(-4)}` ||
+                  'Unknown Account';
+
                 return (
                   <SelectItem key={account.id} value={account.id}>
                     {accountName}
                   </SelectItem>
                 );
-              }) : (
-                <SelectItem value="loading" disabled>
-                  Loading accounts...
-                </SelectItem>
+              })}
+              {!accountsLoading && (!accounts || accounts.length === 0) && (
+                <SelectItem value="no-accounts" disabled>No accounts linked</SelectItem>
               )}
             </SelectContent>
-          </Select>
+          </Select> {/* ✅ Only this closing tag is needed */}
         </div>
 
         <div className="flex items-center gap-2">
@@ -1129,147 +1111,157 @@ export default function EnhancedTradeJournalPage() {
       {/* Enhanced Journal Dialog */}
       <Dialog open={isJournalOpen} onOpenChange={setIsJournalOpen}>
         <DialogContent className="max-w-2xl">
-          <DialogHeader>
-            <DialogTitle>Trade Journal Entry</DialogTitle>
-          </DialogHeader>
           {selectedTrade && (
-            <div className="space-y-4">
-              {/* Enhanced Trade Summary */}
-              <Card>
-                <CardContent className="pt-6">
-                  <div className="grid grid-cols-2 gap-4 text-sm">
-                    <div>
-                      <span className="text-muted-foreground">Symbol:</span>{' '}
-                      <span className="font-medium">{selectedTrade.symbol}</span>
-                    </div>
-                    <div>
-                      <span className="text-muted-foreground">Date:</span>{' '}
-                      <span className="font-medium">
-                        {format(selectedTrade.executedAt, 'MMM dd, yyyy HH:mm')}
-                      </span>
-                    </div>
-                    <div>
-                      <span className="text-muted-foreground">Action:</span>{' '}
-                      <Badge className={getActionBadgeColor(selectedTrade.action)} variant="outline">
-                        {selectedTrade.action}
-                      </Badge>
-                    </div>
-                    <div>
-                      <span className="text-muted-foreground">Quantity:</span>{' '}
-                      <span className="font-medium">{selectedTrade.units}</span>
-                    </div>
-                    <div>
-                      <span className="text-muted-foreground">Price:</span>{' '}
-                      <span className="font-medium">{formatCurrency(selectedTrade.price)}</span>
-                    </div>
-                    <div>
-                      <span className="text-muted-foreground">Type:</span>{' '}
-                      <Badge variant={selectedTrade.isOption ? 'secondary' : 'default'}>
-                        {selectedTrade.isOption ? 'Option' : 'Stock'}
-                      </Badge>
-                    </div>
-                    <div>
-                      <span className="text-muted-foreground">Status:</span>{' '}
-                      <Badge variant="outline">{selectedTrade.status}</Badge>
-                    </div>
-                    {selectedTrade.isOption && selectedTrade.optionDetails && (
-                      <>
-                        <div>
-                          <span className="text-muted-foreground">Strike:</span>{' '}
-                          <span className="font-medium">${selectedTrade.optionDetails.strike}</span>
-                        </div>
-                        <div>
-                          <span className="text-muted-foreground">Expiration:</span>{' '}
-                          <span className="font-medium">
-                            {format(new Date(selectedTrade.optionDetails.expiration), 'MMM dd, yyyy')}
-                          </span>
-                        </div>
-                      </>
-                    )}
-                    {selectedTrade.realizedPnL !== undefined && (
-                      <>
-                        <div>
-                          <span className="text-muted-foreground">Entry:</span>{' '}
-                          <span className="font-medium">{formatCurrency(selectedTrade.entryPrice || 0)}</span>
-                        </div>
-                        <div>
-                          <span className="text-muted-foreground">Exit:</span>{' '}
-                          <span className="font-medium">{formatCurrency(selectedTrade.exitPrice || 0)}</span>
-                        </div>
-                        <div>
-                          <span className="text-muted-foreground">P&L:</span>{' '}
-                          <span className={`font-medium ${selectedTrade.realizedPnL >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                            {formatCurrency(selectedTrade.realizedPnL)}
-                          </span>
-                        </div>
-                        {selectedTrade.holdingPeriod && (
+            <>
+              <DialogHeader>
+                <DialogTitle>Trade Journal Entry</DialogTitle>
+              </DialogHeader>
+
+              <div className="space-y-4">
+                {/* Enhanced Trade Summary */}
+                <Card className="pt-6">
+                  <CardContent>
+                    <div className="grid grid-cols-2 gap-4 text-sm">
+                      <div>
+                        <span className="text-muted-foreground">Symbol:</span>{' '}
+                        <span className="font-medium">{selectedTrade.symbol}</span>
+                      </div>
+                      <div>
+                        <span className="text-muted-foreground">Date:</span>{' '}
+                        <span className="font-medium">
+                          {format(selectedTrade.executedAt, 'MMM dd, yyyy HH:mm')}
+                        </span>
+                      </div>
+                      <div>
+                        <span className="text-muted-foreground">Action:</span>{' '}
+                        <Badge className={getActionBadgeColor(selectedTrade.action)} variant="outline">
+                          {selectedTrade.action}
+                        </Badge>
+                      </div>
+                      <div>
+                        <span className="text-muted-foreground">Quantity:</span>{' '}
+                        <span className="font-medium">{selectedTrade.units}</span>
+                      </div>
+                      <div>
+                        <span className="text-muted-foreground">Price:</span>{' '}
+                        <span className="font-medium">{formatCurrency(selectedTrade.price)}</span>
+                      </div>
+                      <div>
+                        <span className="text-muted-foreground">Type:</span>{' '}
+                        <Badge variant={selectedTrade.isOption ? 'secondary' : 'default'}>
+                          {selectedTrade.isOption ? 'Option' : 'Stock'}
+                        </Badge>
+                      </div>
+                      <div>
+                        <span className="text-muted-foreground">Status:</span>{' '}
+                        <Badge variant="outline">{selectedTrade.status}</Badge>
+                      </div>
+
+                      {selectedTrade.isOption && selectedTrade.optionDetails && (
+                        <>
                           <div>
-                            <span className="text-muted-foreground">Holding Period:</span>{' '}
-                            <span className="font-medium">{selectedTrade.holdingPeriod} days</span>
+                            <span className="text-muted-foreground">Strike:</span>{' '}
+                            <span className="font-medium">${selectedTrade.optionDetails.strike}</span>
                           </div>
-                        )}
-                      </>
-                    )}
-                    <div>
-                      <span className="text-muted-foreground">Commission:</span>{' '}
-                      <span className="font-medium">{formatCurrency(selectedTrade.fee)}</span>
+                          <div>
+                            <span className="text-muted-foreground">Expiration:</span>{' '}
+                            <span className="font-medium">
+                              {format(new Date(selectedTrade.optionDetails.expiration), 'MMM dd, yyyy')}
+                            </span>
+                          </div>
+                        </>
+                      )}
+
+                      {selectedTrade.realizedPnL !== undefined && (
+                        <>
+                          <div>
+                            <span className="text-muted-foreground">Entry:</span>{' '}
+                            <span className="font-medium">
+                              {formatCurrency(selectedTrade.entryPrice || 0)}
+                            </span>
+                          </div>
+                          <div>
+                            <span className="text-muted-foreground">Exit:</span>{' '}
+                            <span className="font-medium">
+                              {formatCurrency(selectedTrade.exitPrice || 0)}
+                            </span>
+                          </div>
+                          <div>
+                            <span className="text-muted-foreground">P&L:</span>{' '}
+                            <span className={`font-medium ${selectedTrade.realizedPnL >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                              {formatCurrency(selectedTrade.realizedPnL)}
+                            </span>
+                          </div>
+                          {selectedTrade.holdingPeriod && (
+                            <div>
+                              <span className="text-muted-foreground">Holding Period:</span>{' '}
+                              <span className="font-medium">{selectedTrade.holdingPeriod} days</span>
+                            </div>
+                          )}
+                        </>
+                      )}
+
+                      <div>
+                        <span className="text-muted-foreground">Commission:</span>{' '}
+                        <span className="font-medium">{formatCurrency(selectedTrade.fee)}</span>
+                      </div>
+                      <div>
+                        <span className="text-muted-foreground">Total Value:</span>{' '}
+                        <span className="font-medium">{formatCurrency(selectedTrade.totalValue)}</span>
+                      </div>
                     </div>
-                    <div>
-                      <span className="text-muted-foreground">Total Value:</span>{' '}
-                      <span className="font-medium">{formatCurrency(selectedTrade.totalValue)}</span>
+                  </CardContent>
+                </Card>
+
+                {/* AI Prompts */}
+                {loadingPrompts ? (
+                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Getting AI suggestions...
+                  </div>
+                ) : aiPrompts.length > 0 && (
+                  <div className="space-y-2">
+                    <p className="text-sm font-medium flex items-center gap-2">
+                      <Award className="h-4 w-4" />
+                      Reflection prompts:
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      {aiPrompts.map((prompt, index) => (
+                        <Button
+                          key={index}
+                          variant="outline"
+                          size="sm"
+                          onClick={() => addPromptToNotes(prompt)}
+                          className="text-xs"
+                        >
+                          {prompt}
+                        </Button>
+                      ))}
                     </div>
                   </div>
-                </CardContent>
-              </Card>
+                )}
 
-              {/* AI Prompts */}
-              {loadingPrompts ? (
-                <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  Getting AI suggestions...
-                </div>
-              ) : aiPrompts.length > 0 && (
+                {/* Journal Notes */}
                 <div className="space-y-2">
-                  <p className="text-sm font-medium flex items-center gap-2">
-                    <Award className="h-4 w-4" />
-                    Reflection prompts:
-                  </p>
-                  <div className="flex flex-wrap gap-2">
-                    {aiPrompts.map((prompt, index) => (
-                      <Button
-                        key={index}
-                        variant="outline"
-                        size="sm"
-                        onClick={() => addPromptToNotes(prompt)}
-                        className="text-xs"
-                      >
-                        {prompt}
-                      </Button>
-                    ))}
-                  </div>
+                  <label className="text-sm font-medium">Journal Notes</label>
+                  <Textarea
+                    value={journalNotes}
+                    onChange={(e) => setJournalNotes(e.target.value)}
+                    placeholder="Document your thoughts, analysis, and lessons learned..."
+                    rows={8}
+                  />
                 </div>
-              )}
 
-              {/* Journal Notes */}
-              <div className="space-y-2">
-                <label className="text-sm font-medium">Journal Notes</label>
-                <Textarea
-                  value={journalNotes}
-                  onChange={(e) => setJournalNotes(e.target.value)}
-                  placeholder="Document your thoughts, analysis, and lessons learned..."
-                  rows={8}
-                />
+                <div className="flex justify-end gap-2">
+                  <Button variant="outline" onClick={() => setIsJournalOpen(false)}>
+                    Cancel
+                  </Button>
+                  <Button onClick={saveJournalEntry} disabled={!journalNotes.trim()}>
+                    Save Entry
+                  </Button>
+                </div>
               </div>
-
-              <div className="flex justify-end gap-2">
-                <Button variant="outline" onClick={() => setIsJournalOpen(false)}>
-                  Cancel
-                </Button>
-                <Button onClick={saveJournalEntry} disabled={!journalNotes.trim()}>
-                  Save Entry
-                </Button>
-              </div>
-            </div>
+            </>
           )}
         </DialogContent>
       </Dialog>
