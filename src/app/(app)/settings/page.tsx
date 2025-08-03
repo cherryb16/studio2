@@ -5,9 +5,25 @@ import React from 'react';
 import { ConnectBrokerageButton } from '@/components/connect-brokerage-button';
 import { useAuth } from '@/hooks/use-auth';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
 
 const SettingsPage = () => {
-  const { user } = useAuth();
+  const { user, logOut } = useAuth();
+
+  const handleDelete = async () => {
+    if (!user) return;
+    if (!confirm('This will permanently delete your account. Continue?')) return;
+    const res = await fetch('/api/delete-account', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ uid: user.uid }),
+    });
+    if (res.ok) {
+      await logOut();
+    } else {
+      console.error('Failed to delete account');
+    }
+  };
 
   return (
     <div className="space-y-6 p-4">
@@ -30,6 +46,17 @@ const SettingsPage = () => {
         <CardContent className="space-y-2">
           <p>Connect your brokerage account to enable trading features.</p>
           <ConnectBrokerageButton />
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Danger Zone</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <Button variant="destructive" onClick={handleDelete}>
+            Delete Account
+          </Button>
         </CardContent>
       </Card>
     </div>
