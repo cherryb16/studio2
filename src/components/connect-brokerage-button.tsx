@@ -3,7 +3,6 @@
 import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
-import { snaptradeWorker } from '@/lib/snaptrade-worker-client';
 import { Loader2 } from 'lucide-react';
 import { useAuth } from '@/hooks/use-auth';
 
@@ -24,9 +23,6 @@ export function ConnectBrokerageButton() {
         if (response.ok) {
           const creds = await response.json();
           setCredentials(creds);
-          if (creds.snaptradeUserId && creds.userSecret) {
-            snaptradeWorker.setCredentials(creds.snaptradeUserId, creds.userSecret);
-          }
         }
       } catch (error) {
         console.error('Error fetching credentials:', error);
@@ -52,10 +48,14 @@ export function ConnectBrokerageButton() {
     }
     
     try {
-      // Use the worker client to get login URL
-      const result = await snaptradeWorker.getLoginUrl();
+      const response = await fetch('/api/snaptrade/login-url', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ firebaseUserId: user.uid }),
+      });
+      const result = await response.json();
 
-      if (result.redirectURI) {
+      if (response.ok && result.redirectURI) {
         window.location.href = result.redirectURI;
       } else {
         toast({

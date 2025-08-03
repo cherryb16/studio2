@@ -12,7 +12,6 @@ export async function POST(request: Request) {
     }
 
     // Remove Firestore data
-    await db.collection('users').doc(uid).delete();
     await db.collection('snaptrade_users').doc(uid).delete();
 
     // Delete SnapTrade user (ignore errors)

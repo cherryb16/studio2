@@ -30,7 +30,7 @@ export const AuthContext = createContext<AuthContextType | undefined>(undefined)
 const db = getFirestore();
 
 async function saveUserData(user: User, userData: Omit<UserData, 'uid' | 'createdAt' | 'email' | 'snaptradeUserID' | 'snaptradeUserSecret'>) {
-  const userRef = doc(db, 'users', user.uid);
+  const userRef = doc(db, 'snaptrade_users', user.uid);
   const dataToSave: UserData = {
     uid: user.uid,
     email: user.email,
@@ -57,7 +57,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const provider = new GoogleAuthProvider();
     const result = await signInWithPopup(auth, provider);
     if (result.user) {
-      const userRef = doc(db, 'users', result.user.uid);
+      const userRef = doc(db, 'snaptrade_users', result.user.uid);
       const userSnap = await getDoc(userRef);
       if (!userSnap.exists()) {
         const [firstName = '', ...lastNameParts] = result.user.displayName?.split(' ') ?? [];
