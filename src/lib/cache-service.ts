@@ -38,7 +38,7 @@ export class CacheService {
     userSecret: string,
     forceRefresh = false
   ): Promise<Account[]> {
-    const cacheKey = `users/${firebaseUserId}/accounts`;
+    const cacheKey = `snaptrade_users/${firebaseUserId}/accounts`;
     
     try {
       // Check cache first unless force refresh
@@ -91,7 +91,7 @@ export class CacheService {
     forceRefresh = false
   ): Promise<any[]> {
     const dateKey = startDate ? startDate.toISOString().split('T')[0] : 'all';
-    const cacheKey = `users/${firebaseUserId}/trades/${period}/${dateKey}`;
+    const cacheKey = `snaptrade_users/${firebaseUserId}/trades/${period}/${dateKey}`;
     
     // Determine TTL based on how recent the data is
     const isRecent = !startDate || (Date.now() - startDate.getTime()) < 7 * 24 * 60 * 60 * 1000; // 7 days
@@ -141,7 +141,7 @@ export class CacheService {
     accountId?: string,
     forceRefresh = false
   ): Promise<any> {
-    const cacheKey = `users/${firebaseUserId}/positions/${accountId || 'all'}`;
+    const cacheKey = `snaptrade_users/${firebaseUserId}/positions/${accountId || 'all'}`;
     
     try {
       // Check cache first unless force refresh
@@ -230,7 +230,7 @@ export class CacheService {
         return null;
       }
       
-      const [userId, ...pathParts] = cacheKey.split('/').slice(1); // Remove 'users' prefix
+      const [userId, ...pathParts] = cacheKey.split('/').slice(1); // Remove 'snaptrade_users' prefix
       const fieldPath = pathParts.join('_'); // Convert path to field name
       
       const cacheDocRef = doc(db, 'cache', userId);
@@ -263,7 +263,7 @@ export class CacheService {
 
   private static async setCachedData<T>(cacheKey: string, data: T, ttl: number): Promise<void> {
     try {
-      const [userId, ...pathParts] = cacheKey.split('/').slice(1); // Remove 'users' prefix
+      const [userId, ...pathParts] = cacheKey.split('/').slice(1); // Remove 'snaptrade_users' prefix
       const fieldPath = pathParts.join('_'); // Convert path to field name
       
       const cacheEntry: CacheEntry<T> = {
