@@ -13,7 +13,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   }
 
   try {
-    const userDoc = await db.collection('users').doc(firebaseUserId).get();
+    const userDoc = await db.collection('snaptrade_users').doc(firebaseUserId).get();
     if (userDoc.exists) {
       return res.status(200).json(userDoc.data());
     }
