@@ -15,12 +15,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   try {
     // Check if this is SnapTrade credentials update
-    if (data.snaptradeUserID && data.snaptradeUserSecret) {
+    if (data.SnaptradeUserID && data.snaptradeUserSecret) {
       console.log('Updating SnapTrade credentials for user:', firebaseUserId);
 
       // Store in snaptrade_users collection
       await db.collection('snaptrade_users').doc(firebaseUserId).set({
-        snaptradeUserID: data.snaptradeUserID,
+        SnaptradeUserID: data.SnaptradeUserID,
         snaptradeUserSecret: data.snaptradeUserSecret,
         snaptradeRegisteredAt: data.snaptradeRegisteredAt || new Date().toISOString(),
         hasSnapTradeAccount: true,

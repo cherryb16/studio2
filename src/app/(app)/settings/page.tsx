@@ -1,8 +1,8 @@
 // src/app/(app)/settings/page.tsx
 'use client';
 
-import React from 'react';
-import { useRouter } from 'next/navigation';
+import React, { useEffect, useRef } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { ConnectBrokerageButton } from '@/components/connect-brokerage-button';
 import { useAuth } from '@/hooks/use-auth';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
@@ -11,6 +11,19 @@ import { Button } from '@/components/ui/button';
 const SettingsPage = () => {
   const { user, logOut } = useAuth();
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const connectButtonRef = useRef<HTMLButtonElement>(null);
+
+  // Auto-trigger brokerage connection for new users
+  useEffect(() => {
+    const shouldConnect = searchParams.get('connect');
+    if (shouldConnect === 'true' && connectButtonRef.current) {
+      // Small delay to ensure the component is fully rendered
+      setTimeout(() => {
+        connectButtonRef.current?.click();
+      }, 500);
+    }
+  }, [searchParams]);
 
   const handleDelete = async () => {
     if (!user) return;
@@ -48,7 +61,7 @@ const SettingsPage = () => {
         </CardHeader>
         <CardContent className="space-y-2">
           <p>Connect your brokerage account to enable trading features.</p>
-          <ConnectBrokerageButton />
+          <ConnectBrokerageButton ref={connectButtonRef} />
         </CardContent>
       </Card>
 

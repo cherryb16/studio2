@@ -13,9 +13,8 @@ import {
 
 import { UserIcon, LogOut } from 'lucide-react';
 import Link from 'next/link';
-import { auth } from '@/lib/firebase';
-import { signOut } from 'firebase/auth';
 import { getInitials } from '@/lib/utils';
+import { useAuth } from '@/hooks/use-auth';
 
 
 interface UserNavProps {
@@ -27,15 +26,13 @@ interface UserNavProps {
 }
 
 export function UserNav({ user }: UserNavProps) {
+  const { logOut } = useAuth();
 
   const handleSignOut = async () => {
     try {
-      await signOut(auth);
-      // Redirect to login page or show a success message
-      // You might want to use Next.js router for navigation
+      await logOut();
     } catch (error) {
       console.error('Error signing out:', error);
-      // Show an error message to the user
     }
   };
 

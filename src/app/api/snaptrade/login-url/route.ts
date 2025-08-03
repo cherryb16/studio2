@@ -1,5 +1,4 @@
-import { db } from '@/lib/firebase-admin';
-import { getWorkerLoginUrl } from '@/app/actions/snaptrade-worker';
+import { getSnapTradeLoginUrl } from '@/app/actions/snaptrade';
 
 export async function POST(request: Request) {
   try {
@@ -9,21 +8,19 @@ export async function POST(request: Request) {
       return new Response(JSON.stringify({ error: 'firebaseUserId is required' }), { status: 400 });
     }
 
-    const userDoc = await db.collection('snaptrade_users').doc(firebaseUserId).get();
-    if (!userDoc.exists) {
-      return new Response(JSON.stringify({ error: 'SnapTrade credentials not found for this user' }), { status: 404 });
+    // Use the existing snaptrade.ts function that handles credential creation automatically
+    const result = await getSnapTradeLoginUrl(firebaseUserId);
+    
+    if (result.error) {
+      return new Response(JSON.stringify({ error: result.error }), { status: 400 });
     }
-
-    const data = userDoc.data();
-    const snaptradeUserId = data?.snaptradeUserID;
-    const userSecret = data?.snaptradeUserSecret;
-
-    if (!snaptradeUserId || !userSecret) {
-      return new Response(JSON.stringify({ error: 'SnapTrade credentials not found for this user' }), { status: 404 });
+    
+    // The function returns { data: { redirectUrl } }, but we need { redirectURI }
+    if (result.data?.redirectUrl) {
+      return new Response(JSON.stringify({ redirectURI: result.data.redirectUrl }), { status: 200 });
     }
-
-    const result = await getWorkerLoginUrl(snaptradeUserId, userSecret);
-    return new Response(JSON.stringify(result), { status: 200 });
+    
+    return new Response(JSON.stringify({ error: 'Failed to generate login URL' }), { status: 500 });
   } catch (error) {
     console.error('Error generating SnapTrade login URL:', error);
     return new Response(JSON.stringify({ error: 'Internal Server Error' }), { status: 500 });

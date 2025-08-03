@@ -8,18 +8,18 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     return res.status(405).json({ error: 'Method Not Allowed' });
   }
 
-  const { firebaseUserId, snaptradeUserID, snaptradeUserSecret } = req.body;
+  const { firebaseUserId, SnaptradeUserID, snaptradeUserSecret } = req.body;
   
-  if (!firebaseUserId || !snaptradeUserID || !snaptradeUserSecret) {
+  if (!firebaseUserId || !SnaptradeUserID || !snaptradeUserSecret) {
     return res.status(400).json({ 
-      error: 'firebaseUserId, snaptradeUserID, and snaptradeUserSecret are required' 
+      error: 'firebaseUserId, SnaptradeUserID, and snaptradeUserSecret are required' 
     });
   }
 
   try {
     // Store in snaptrade_users collection
     await db.collection('snaptrade_users').doc(firebaseUserId).set({
-      snaptradeUserID: snaptradeUserID,
+      SnaptradeUserID: SnaptradeUserID,
       snaptradeUserSecret: snaptradeUserSecret,
       updatedAt: new Date().toISOString(),
     }, { merge: true });

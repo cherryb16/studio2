@@ -13,39 +13,78 @@ import {
 } from 'firebase/auth';
 import { auth } from '@/lib/firebase';
 import { useRouter, usePathname } from 'next/navigation';
-import { doc, setDoc, getFirestore, getDoc } from 'firebase/firestore';
 import { UserData } from '@/lib/types';
+import { OnboardingForm } from './onboarding-form';
 
 export interface AuthContextType {
   user: User | null;
   loading: boolean;
   signIn: (email: string, pass: string) => Promise<any>;
   googleSignIn: () => Promise<any>;
-  signUp: (userData: Omit<UserData, 'uid' | 'createdAt' | 'email' | 'snaptradeUserID' | 'snaptradeUserSecret'> & { email: string, password: string }) => Promise<any>;
+  signUp: (userData: Omit<UserData, 'uid' | 'createdAt' | 'email' | 'SnaptradeUserID' | 'snaptradeUserSecret'> & { email: string, password: string }) => Promise<any>;
   logOut: () => Promise<void>;
+  showOnboarding: boolean;
+  completeOnboarding: () => void;
 }
 
 export const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-const db = getFirestore();
+// Use server-side API for all Firestore operations to avoid permission issues
+async function saveUserDataViaAPI(user: User, userData: Omit<UserData, 'uid' | 'createdAt' | 'email' | 'SnaptradeUserID' | 'snaptradeUserSecret'>) {
+  try {
+    console.log("Attempting to save user data via API for:", user.uid);
+    const dataToSave = {
+      uid: user.uid,
+      email: user.email,
+      firstName: userData.firstName,
+      lastName: userData.lastName,
+      dob: userData.dob || 0, // Default to 0 if not provided
+      tradingExperience: userData.tradingExperience,
+    };
+    
+    console.log("Data to save:", dataToSave);
+    
+    const response = await fetch('/api/firebase/saveUserData', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(dataToSave),
+    });
+    
+    if (!response.ok) {
+      throw new Error(`API request failed: ${response.status}`);
+    }
+    
+    console.log("User data saved successfully via API");
+  } catch (error) {
+    console.error("Error saving user data via API:", error);
+    throw error;
+  }
+}
 
-async function saveUserData(user: User, userData: Omit<UserData, 'uid' | 'createdAt' | 'email' | 'snaptradeUserID' | 'snaptradeUserSecret'>) {
-  const userRef = doc(db, 'snaptrade_users', user.uid);
-  const dataToSave: UserData = {
-    uid: user.uid,
-    email: user.email,
-    createdAt: Date.now(),
-    firstName: userData.firstName,
-    lastName: userData.lastName,
-    dob: userData.dob,
-    tradingExperience: userData.tradingExperience,
-  };
-  await setDoc(userRef, dataToSave, { merge: true });
+async function checkUserOnboardingViaAPI(uid: string) {
+  try {
+    console.log("Checking onboarding status via API for:", uid);
+    const response = await fetch(`/api/firebase/getUserOnboardingStatus?uid=${uid}`);
+    
+    if (!response.ok) {
+      console.log("API request failed, assuming new user");
+      return { exists: false, onboardingCompleted: false };
+    }
+    
+    const data = await response.json();
+    console.log("Onboarding status:", data);
+    return data;
+  } catch (error) {
+    console.error("Error checking onboarding status:", error);
+    // Assume new user if we can't check
+    return { exists: false, onboardingCompleted: false };
+  }
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
+  const [showOnboarding, setShowOnboarding] = useState(false);
   const router = useRouter();
   const pathname = usePathname();
 
@@ -54,47 +93,123 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const googleSignIn = async () => {
-    const provider = new GoogleAuthProvider();
-    const result = await signInWithPopup(auth, provider);
-    if (result.user) {
-      const userRef = doc(db, 'snaptrade_users', result.user.uid);
-      const userSnap = await getDoc(userRef);
-      if (!userSnap.exists()) {
-        const [firstName = '', ...lastNameParts] = result.user.displayName?.split(' ') ?? [];
-        await saveUserData(result.user, {
-          firstName,
-          lastName: lastNameParts.join(' '),
-          dob: 0,
-          tradingExperience: '',
-        });
+    try {
+      const provider = new GoogleAuthProvider();
+      const result = await signInWithPopup(auth, provider);
+      
+      if (result.user) {
+        console.log("Google user signed in:", result.user.email, result.user.uid);
+        
+        // Check onboarding status via API
+        const onboardingStatus = await checkUserOnboardingViaAPI(result.user.uid);
+        
+        if (!onboardingStatus.exists) {
+          console.log("New Google user - creating profile and showing onboarding");
+          const [firstName = '', ...lastNameParts] = result.user.displayName?.split(' ') ?? [];
+          
+          try {
+            await saveUserDataViaAPI(result.user, {
+              firstName,
+              lastName: lastNameParts.join(' '),
+              dob: 0,
+              tradingExperience: '',
+            });
+            console.log("User data saved successfully");
+          } catch (saveError) {
+            console.error("Error saving user data:", saveError);
+          }
+          
+          // Always show onboarding for new users
+          setShowOnboarding(true);
+        } else if (!onboardingStatus.onboardingCompleted) {
+          console.log("Existing user needs onboarding");
+          setShowOnboarding(true);
+        } else {
+          console.log("User has completed onboarding");
+        }
       }
-      console.log("Google user signed in with popup:", result.user.email);
+      return result;
+    } catch (error) {
+      console.error("Google sign-in error:", error);
+      throw error;
     }
-    return result;
   };
 
-  const signUp = async (userData: Omit<UserData, 'uid' | 'createdAt' | 'email' | 'snaptradeUserID' | 'snaptradeUserSecret'> & { email: string, password: string }) => {
-    const { email, password, ...additionalData } = userData;
-    const userCredential = await createUserWithEmailAndPassword(auth, email, password);
-    if (userCredential.user) {
-      await updateProfile(userCredential.user, {
-        displayName: `${additionalData.firstName} ${additionalData.lastName}`,
-      });
+  const signUp = async (userData: Omit<UserData, 'uid' | 'createdAt' | 'email' | 'SnaptradeUserID' | 'snaptradeUserSecret'> & { email: string, password: string }) => {
+    try {
+      const { email, password, ...additionalData } = userData;
+      console.log("Creating new user account:", email);
+      
+      const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+      
+      if (userCredential.user) {
+        console.log("User account created:", userCredential.user.uid);
+        
+        try {
+          await updateProfile(userCredential.user, {
+            displayName: `${additionalData.firstName} ${additionalData.lastName}`,
+          });
+          console.log("User profile updated");
+        } catch (profileError) {
+          console.error("Error updating profile:", profileError);
+        }
+        
+        try {
+          await saveUserDataViaAPI(userCredential.user, additionalData);
+          console.log("User data saved via API");
+        } catch (saveError) {
+          console.error("Error saving user data:", saveError);
+        }
+        
+        // Always show onboarding for new email/password users
+        console.log("Showing onboarding for new signup user");
+        setShowOnboarding(true);
+      }
+      
+      return userCredential;
+    } catch (error) {
+      console.error("Sign up error:", error);
+      throw error;
     }
-    await saveUserData(userCredential.user, additionalData);
-    return userCredential;
   };
 
-  const logOut = () => {
-    return signOut(auth);
+  const logOut = async () => {
+    await signOut(auth);
+    router.push('/login');
+  };
+
+  const completeOnboarding = () => {
+    setShowOnboarding(false);
+    // Redirect to brokerage connection
+    router.push('/settings?connect=true');
   };
 
   useEffect(() => {
     console.log('AuthProvider: Setting up auth listener');
     
-    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+    const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
       console.log("Auth state changed. Current user:", currentUser?.email || "No user");
       setUser(currentUser);
+      
+      // Check if existing user needs onboarding via API (only for existing sessions)
+      if (currentUser) {
+        // Only check onboarding for users who are already signed in (not during signup/login flow)
+        // This prevents double-checking during the signup/login process
+        setTimeout(async () => {
+          try {
+            const onboardingStatus = await checkUserOnboardingViaAPI(currentUser.uid);
+            console.log('User onboarding status:', onboardingStatus);
+            
+            if (!onboardingStatus.onboardingCompleted) {
+              console.log('Showing onboarding for existing user');
+              setShowOnboarding(true);
+            }
+          } catch (error) {
+            console.error('Error checking onboarding status:', error);
+          }
+        }, 1000); // Small delay to avoid conflicts with signup/login flows
+      }
+      
       setLoading(false);
     });
 
@@ -138,11 +253,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     googleSignIn,
     signUp,
     logOut,
+    showOnboarding,
+    completeOnboarding,
   };
 
   return (
     <AuthContext.Provider value={contextValue}>
       {children}
+      {showOnboarding && <OnboardingForm onComplete={completeOnboarding} />}
     </AuthContext.Provider>
   );
 }

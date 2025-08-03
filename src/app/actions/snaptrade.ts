@@ -2,6 +2,7 @@
 'use server';
 import { UserIDandSecret, Balance, Account } from "snaptrade-typescript-sdk";
 import { snaptrade } from './snaptrade-client';
+import { db } from '@/lib/firebase-admin';
 
 // ==================== AUTHENTICATION & USER MANAGEMENT ====================
 
@@ -17,40 +18,21 @@ export async function getSnapTradeLoginUrl(firebaseUserId: string) {
   }
 
   try {
-    // Check if user already exists in SnapTrade
-    const userListResponse = await snaptrade.authentication.listSnapTradeUsers();
-    const existingUserInSnapTrade = userListResponse.data.find((userIdString: string) => userIdString === firebaseUserId);
+    console.log('Checking for existing SnapTrade credentials in Firestore...');
+    
+    // Check Firestore first to avoid unnecessary API calls
+    const firestoreCredentials = await getSnapTradeCredentials(firebaseUserId);
+    
+    let userSecretToUse: string;
+    let snaptradeUserIdToUse: string;
 
-    let userSecretToUse = null;
-    let snaptradeUserIdToUse = null;
-
-    if (existingUserInSnapTrade) {
-      console.log(`SnapTrade user with ID ${firebaseUserId} already exists.`);
-      const firestoreCredentials = await getSnapTradeCredentials(firebaseUserId);
-      
-      if (firestoreCredentials) {
-        snaptradeUserIdToUse = firestoreCredentials.snaptradeUserId;
-        userSecretToUse = firestoreCredentials.userSecret;
-        console.log('SnapTrade credentials found in Firestore.');
-      } else {
-        console.log('SnapTrade credentials not found in Firestore. Re-registering...');
-        const registerResponse = await snaptrade.authentication.registerSnapTradeUser({
-          userId: firebaseUserId
-        });
-
-        const registrationData = registerResponse.data as UserIDandSecret;
-        if (!registrationData || !registrationData.userId || !registrationData.userSecret) {
-          console.error('SnapTrade re-registration failed');
-          return { error: 'Failed to re-register user with SnapTrade.' };
-        }
-
-        snaptradeUserIdToUse = registrationData.userId;
-        userSecretToUse = registrationData.userSecret;
-
-        await saveSnapTradeCredentials(firebaseUserId, registrationData);
-      }
+    if (firestoreCredentials && firestoreCredentials.userSecret) {
+      // Use existing credentials from Firestore
+      snaptradeUserIdToUse = firestoreCredentials.snaptradeUserId;
+      userSecretToUse = firestoreCredentials.userSecret;
+      console.log('Using existing SnapTrade credentials from Firestore.');
     } else {
-      // Register new user
+      // Register new user with SnapTrade
       console.log(`Registering new SnapTrade user: ${firebaseUserId}`);
       const registerResponse = await snaptrade.authentication.registerSnapTradeUser({
         userId: firebaseUserId
@@ -65,7 +47,9 @@ export async function getSnapTradeLoginUrl(firebaseUserId: string) {
       snaptradeUserIdToUse = registrationData.userId;
       userSecretToUse = registrationData.userSecret;
 
+      // Save credentials to Firestore for future use
       await saveSnapTradeCredentials(firebaseUserId, registrationData);
+      console.log('New SnapTrade user registered and credentials saved.');
     }
 
     // Get redirect URL
@@ -90,17 +74,44 @@ export async function getSnapTradeLoginUrl(firebaseUserId: string) {
 
   } catch (error) {
     console.error('SnapTrade process error:', error);
+    
+    // Check if it's a network connectivity issue
+    if (error instanceof Error && error.message.includes('ENOTFOUND api.snaptrade.com')) {
+      console.error('Cannot connect to SnapTrade API - network issue');
+      return { 
+        error: 'Unable to connect to SnapTrade API. This may be a temporary network issue. Please check your internet connection and try again in a few minutes.' 
+      };
+    }
+    
     return { error: error instanceof Error ? error.message : 'An unexpected error occurred.' };
   }
 }
 
 export async function getSnapTradeCredentials(firebaseUserId: string) {
   try {
-    const res = await fetch(`/api/firebase/getCredentials?firebaseUserId=${firebaseUserId}`, { cache: 'no-store' });
-    if (!res.ok) return null;
-    const data = await res.json();
-    if (data.snaptradeUserId && data.userSecret) {
-      return { snaptradeUserId: data.snaptradeUserId, userSecret: data.userSecret };
+    console.log(`Querying Firestore for user: ${firebaseUserId}`);
+    const userDoc = await db.collection('snaptrade_users').doc(firebaseUserId).get();
+    
+    console.log(`Document exists: ${userDoc.exists}`);
+    
+    if (userDoc.exists) {
+      const data = userDoc.data();
+      console.log('Full document data:', JSON.stringify(data, null, 2));
+      
+      // SnapTrade user ID should be the same as Firebase UID
+      const snaptradeUserId = firebaseUserId; // Use Firebase UID directly
+      const userSecret = data?.snaptradeUserSecret;
+      
+      console.log(`snaptradeUserID: ${snaptradeUserId} (using Firebase UID)`);
+      console.log(`snaptradeUserSecret: ${userSecret ? '[PRESENT]' : '[MISSING]'}`);
+      
+      if (userSecret) {
+        return { snaptradeUserId, userSecret };
+      } else {
+        console.log('SnapTrade user secret missing in Firestore document');
+      }
+    } else {
+      console.log('User document does not exist in snaptrade_users collection');
     }
     return null;
   } catch (error) {
@@ -111,19 +122,13 @@ export async function getSnapTradeCredentials(firebaseUserId: string) {
 
 async function saveSnapTradeCredentials(firebaseUserId: string, credentials: UserIDandSecret) {
   try {
-    await fetch('/api/firebase/updateSomething', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        firebaseUserId,
-        data: {
-          snaptradeUserID: credentials.userId,
-          snaptradeUserSecret: credentials.userSecret,
-          snaptradeRegisteredAt: new Date().toISOString(),
-        },
-      }),
+    const userRef = db.collection('snaptrade_users').doc(firebaseUserId);
+    await userRef.update({
+      SnaptradeUserID: firebaseUserId, // Use Firebase UID as SnapTrade user ID
+      snaptradeUserSecret: credentials.userSecret,
+      snaptradeRegisteredAt: new Date().toISOString(),
     });
-    console.log('SnapTrade credentials stored via API.');
+    console.log('SnapTrade credentials stored in Firestore.');
   } catch (error) {
     console.error('Failed to store SnapTrade credentials:', error);
   }

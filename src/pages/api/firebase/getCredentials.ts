@@ -16,7 +16,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const userDoc = await db.collection('snaptrade_users').doc(firebaseUserId).get();
     if (userDoc.exists) {
       const data = userDoc.data();
-      const snaptradeUserId = data?.snaptradeUserID;
+      const snaptradeUserId = data?.SnaptradeUserID;
       const userSecret = data?.snaptradeUserSecret;
       if (snaptradeUserId && userSecret) {
         return res.status(200).json({ snaptradeUserId, userSecret });
