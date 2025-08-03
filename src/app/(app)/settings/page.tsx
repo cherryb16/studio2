@@ -2,6 +2,7 @@
 'use client';
 
 import React from 'react';
+import { useRouter } from 'next/navigation';
 import { ConnectBrokerageButton } from '@/components/connect-brokerage-button';
 import { useAuth } from '@/hooks/use-auth';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
@@ -9,6 +10,7 @@ import { Button } from '@/components/ui/button';
 
 const SettingsPage = () => {
   const { user, logOut } = useAuth();
+  const router = useRouter();
 
   const handleDelete = async () => {
     if (!user) return;
@@ -20,6 +22,7 @@ const SettingsPage = () => {
     });
     if (res.ok) {
       await logOut();
+      router.push('/login');
     } else {
       console.error('Failed to delete account');
     }
