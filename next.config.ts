@@ -18,6 +18,9 @@ const nextConfig: NextConfig = {
       },
     ],
   },
+  // Optimize for Cloudflare Pages
+  output: 'standalone',
+  serverExternalPackages: ['firebase-admin'],
 };
 
 export default nextConfig;

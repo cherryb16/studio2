@@ -1,5 +1,5 @@
 #:schema node_modules/wrangler/config-schema.json
-name = "studio3"
+name = "trade-insights-pro"
 compatibility_date = "2025-01-10"
 compatibility_flags = ["nodejs_compat"]
 
