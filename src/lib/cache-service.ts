@@ -182,6 +182,11 @@ export class CacheService {
    */
   static async invalidateCache(firebaseUserId: string, type: 'accounts' | 'trades' | 'positions' | 'all') {
     try {
+      if (!db) {
+        console.warn('Firestore not initialized, skipping cache invalidation');
+        return;
+      }
+
       if (type === 'all') {
         // Delete entire user cache
         const cacheDocRef = doc(db, 'cache', firebaseUserId);
@@ -208,7 +213,8 @@ export class CacheService {
       
       console.log(`🗑️ Invalidated ${type} cache for user ${firebaseUserId}`);
     } catch (error) {
-      console.error('Error invalidating cache:', error);
+      console.warn('Error invalidating cache (non-critical):', error);
+      // Cache invalidation failure is non-critical
     }
   }
 
@@ -256,7 +262,8 @@ export class CacheService {
       
       return cacheEntry.data;
     } catch (error) {
-      console.error('Error reading cache:', error);
+      console.warn('Error reading cache (non-critical):', error);
+      // Return null instead of crashing - cache failures shouldn't break the app
       return null;
     }
   }
@@ -284,8 +291,9 @@ export class CacheService {
       
       console.log('💾 Cached data for', cacheKey);
     } catch (error) {
-      console.error('Error setting cache:', error);
+      console.warn('Error setting cache (non-critical):', error);
       // Don't throw - cache failures shouldn't break the app
+      // This is non-critical as the app can work without caching
     }
   }
 
@@ -305,7 +313,7 @@ export class CacheService {
       
       return cacheEntry?.data || null;
     } catch (error) {
-      console.error('Error reading stale cache:', error);
+      console.warn('Error reading stale cache (non-critical):', error);
       return null;
     }
   }

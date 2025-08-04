@@ -1,32 +1,7 @@
 'use client';
 
-import type { OptionPosition } from '@/app/actions/portfolio-analytics';
 
-function toOptionPositions(positions: Position[]): OptionPosition[] {
-  return positions
-    .filter(p => p.symbol?.option_symbol)
-    .map(p => ({
-      symbol: {
-        option_symbol: {
-          ticker: p.symbol?.symbol ?? '',
-          option_type: p.symbol?.option_symbol?.option_type === 'CALL' ? 'CALL' : 'PUT',
-          strike_price: p.symbol?.option_symbol?.strike_price ?? 0,
-          expiration_date: p.symbol?.option_symbol?.expiration_date ?? '',
-          underlying_symbol: {
-            symbol: p.symbol?.option_symbol?.underlying_symbol?.symbol ?? '',
-            description: p.symbol?.description ?? '',
-          },
-        },
-      },
-      units: p.units ?? 0,
-      price: p.price ?? 0,
-      average_purchase_price: p.average_purchase_price ?? 0,
-      currency: p.currency?.code ? { code: p.currency.code } : { code: 'USD' },
-    }));
-}
-
-
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef, useEffect } from 'react';
 import {
   DndContext,
   closestCenter,
@@ -75,7 +50,13 @@ type OptionCol =
 
 interface Position {
   symbol: {
-    symbol?: string;
+    symbol?: {
+      symbol?: string;
+      type?: {
+        code?: string;
+        description?: string;
+      };
+    };
     option_symbol?: {
       underlying_symbol?: { symbol?: string };
       option_type?: string;
@@ -85,15 +66,12 @@ interface Position {
     id?: string;
     description?: string;
     local_id?: string;
-    security_type?: any;
   } | null | undefined;
   price: number | null | undefined;
-  value: number | null | undefined;
   units: number | null | undefined;
   average_purchase_price: number | null | undefined;
-  realized_pnl: number | null | undefined;
   open_pnl: number | null | undefined;
-  currency: { code: string; name: string; id: string } | null | undefined;
+  fractional_units?: number | null | undefined;
 }
 
 // Draggable column item component for equity columns
@@ -111,7 +89,6 @@ const SortableEquityColumnItem = ({
     listeners,
     setNodeRef,
     transform,
-    transition,
     isDragging,
   } = useSortable({ id: col });
 
@@ -123,7 +100,6 @@ const SortableEquityColumnItem = ({
   return (
     <div
       ref={setNodeRef}
-      /* webhint-ignore no-inline-styles */
       style={style}
       {...attributes}
       {...listeners}
@@ -161,7 +137,6 @@ const SortableOptionColumnItem = ({
     listeners,
     setNodeRef,
     transform,
-    transition,
     isDragging,
   } = useSortable({ id: col });
 
@@ -172,7 +147,6 @@ const SortableOptionColumnItem = ({
   return (
     <div
       ref={setNodeRef}
-      /* webhint-ignore no-inline-styles */
       style={style}
       {...attributes}
       {...listeners}
@@ -196,7 +170,6 @@ const SortableOptionColumnItem = ({
 };
 import {
   calculateEquitiesBalance,
-  calculateOptionsBalance,
   calculateCryptoBalance,
   calculateOtherAssetsBalance
 } from '@/app/actions/portfolio-analytics';
@@ -236,18 +209,39 @@ const PositionsPage = () => {
   );
 
   // Auth and SnapTrade credentials logic
-  const { user, loading: authLoading } = useAuth();
+  const { user } = useAuth();
   const firebaseUserId = user?.uid;
 
   // Filter states
   const [filter, setFilter] = useState('');
   const [selectedAccount, setSelectedAccount] = useState<string>('all');
-  const [positionType, setPositionType] = useState<'all' | 'stocks' | 'options'>('all');
+  const [positionType, setPositionType] = useState<'all' | 'common_stock' | 'options' | 'crypto' | 'etf' | 'bond'>('all');
   const [profitabilityFilter, setProfitabilityFilter] = useState<'all' | 'profitable' | 'losing'>('all');
-  const [sizeFilter, setSizeFilter] = useState<'all' | 'large' | 'medium' | 'small'>('all');
-  const [minValue, setMinValue] = useState<string>('');
+  const [showPositionSizeDropdown, setShowPositionSizeDropdown] = useState(false);
+  const [minPositionSize, setMinPositionSize] = useState<string>('');
+  const [maxPositionSize, setMaxPositionSize] = useState<string>('');
+  const [showClearFiltersDropdown, setShowClearFiltersDropdown] = useState(false);
+  const positionSizeDropdownRef = useRef<HTMLDivElement>(null);
+  const clearFiltersDropdownRef = useRef<HTMLDivElement>(null);
 
-  const { data: snaptradeCredentials, isLoading: credentialsLoading } = useQuery({
+  // Close dropdowns when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (positionSizeDropdownRef.current && !positionSizeDropdownRef.current.contains(event.target as Node)) {
+        setShowPositionSizeDropdown(false);
+      }
+      if (clearFiltersDropdownRef.current && !clearFiltersDropdownRef.current.contains(event.target as Node)) {
+        setShowClearFiltersDropdown(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, []);
+
+  const { data: snaptradeCredentials } = useQuery({
     queryKey: ['snaptradeCredentials', firebaseUserId],
     queryFn: async () => {
       if (!firebaseUserId) throw new Error('Missing Firebase user ID');
@@ -298,76 +292,146 @@ const PositionsPage = () => {
     'Underlying', 'Strike', 'Type', 'Expiration', 'Quantity', 'Price', 'Purchase Price', 'Value', 'Unrealized P/L', 'P/L %'
   ]);
 
-  const { equities, options }: { equities: Position[]; options: any[] } = useMemo(() => {
-    let filteredEquities = safePositions;
-    let filteredOptions = safeOptionPositions;
+  // Get unique symbols for dropdown (including both regular stocks and underlying stocks from options)
+  const availableSymbols = useMemo(() => {
+    if (!Array.isArray(safePositions) && !Array.isArray(safeOptionPositions)) {
+      return [];
+    }
     
-    // Filter by symbol/text
-    if (filter) {
+    // Get symbols from regular equity positions - updated for SnapTrade API structure
+    const equitySymbols = (Array.isArray(safePositions) ? safePositions : [])
+      .map(position => position?.symbol?.symbol?.symbol) // nested symbol.symbol.symbol
+      .filter((symbol): symbol is string => Boolean(symbol) && typeof symbol === 'string');
+    
+    // Get underlying symbols from options - updated for SnapTrade API structure
+    const optionUnderlyingSymbols = (Array.isArray(safeOptionPositions) ? safeOptionPositions : [])
+      .map(option => option?.symbol?.option_symbol?.underlying_symbol?.symbol)
+      .filter((symbol): symbol is string => Boolean(symbol) && typeof symbol === 'string');
+    
+    // Combine all unique symbols (regular stocks + underlying stocks from options)
+    const allSymbols = [...new Set([...equitySymbols, ...optionUnderlyingSymbols])];
+    return allSymbols.sort();
+  }, [safePositions, safeOptionPositions]);
+
+  const { equities, options }: { equities: Position[]; options: any[] } = useMemo(() => {
+    let filteredEquities = Array.isArray(safePositions) ? safePositions : [];
+    let filteredOptions = Array.isArray(safeOptionPositions) ? safeOptionPositions : [];
+    
+    // Filter by symbol dropdown - updated for SnapTrade API structure
+    if (filter && filter !== 'all') {
       filteredEquities = filteredEquities.filter(position => {
-        const equitySymbol = position?.symbol?.symbol?.toLowerCase();
-        return equitySymbol?.includes(filter.toLowerCase());
+        const equitySymbol = position?.symbol?.symbol?.symbol; // nested symbol.symbol.symbol
+        return equitySymbol === filter;
       });
       
       filteredOptions = filteredOptions.filter(option => {
-        const optionSymbol = option?.symbol?.option_symbol;
-        const optionString = optionSymbol?.underlying_symbol?.symbol ?
-          `${optionSymbol.underlying_symbol.symbol} ${optionSymbol.strike_price || ''} ${optionSymbol.option_type || ''} ${optionSymbol.expiration_date || ''}`.toLowerCase() : '';
-        return optionString.includes(filter.toLowerCase());
+        const optionSymbol = option?.symbol?.option_symbol?.underlying_symbol?.symbol;
+        return optionSymbol === filter;
       });
     }
 
     // Filter by position type
-    if (positionType === 'stocks') {
-      filteredOptions = []; // Hide options
-    } else if (positionType === 'options') {
-      filteredEquities = []; // Hide equities
+    if (positionType !== 'all') {
+      if (positionType === 'options') {
+        filteredEquities = []; // Hide equities when showing only options
+      } else {
+        // Filter equities by security type - updated for SnapTrade API structure
+        filteredEquities = filteredEquities.filter(position => {
+          const typeCode = position?.symbol?.symbol?.type?.code; // Use symbol.symbol.type.code
+          const typeDescription = position?.symbol?.symbol?.type?.description;
+          const symbol = position?.symbol?.symbol?.symbol;
+          
+          console.log('Position filtering debug:', {
+            symbol,
+            typeCode,
+            typeDescription,
+            positionType,
+            symbolStructure: position?.symbol?.symbol
+          });
+          
+          switch (positionType) {
+            case 'common_stock':
+              // SnapTrade uses 'cs' for common stock based on your example
+              return typeCode === 'cs' || 
+                     typeDescription === 'Common Stock' ||
+                     typeCode === 'equity' ||
+                     typeCode === 'stock' ||
+                     (!typeCode && symbol && typeof symbol === 'string'); // fallback for positions without explicit type
+            case 'crypto':
+              return typeCode === 'crypto' || 
+                     typeCode === 'cryptocurrency' ||
+                     typeDescription?.toLowerCase().includes('crypto');
+            case 'etf':
+              return typeCode === 'etf' || 
+                     typeCode === 'fund' ||
+                     typeDescription?.toLowerCase().includes('etf') ||
+                     typeDescription?.toLowerCase().includes('fund');
+            case 'bond':
+              return typeCode === 'bond' || 
+                     typeCode === 'fixed_income' ||
+                     typeDescription?.toLowerCase().includes('bond');
+            default:
+              return true;
+          }
+        });
+        
+        // Hide options for non-option filters
+        filteredOptions = [];
+      }
     }
 
-    // Filter by profitability
+    // Filter by profitability - updated for SnapTrade API structure
     if (profitabilityFilter !== 'all') {
       filteredEquities = filteredEquities.filter(position => {
-        const pnl = position.open_pnl || 0;
+        const pnl = position.open_pnl || 0; // SnapTrade provides open_pnl directly
         return profitabilityFilter === 'profitable' ? pnl > 0 : pnl < 0;
       });
       
       filteredOptions = filteredOptions.filter(option => {
-        const pnl = option.open_pnl || 0;
+        // For options, calculate P&L since SnapTrade structure doesn't include open_pnl for options
+        const units = option.units || 0;
+        const currentPrice = option.price || 0;
+        const avgPurchasePrice = option.average_purchase_price || 0;
+        
+        // Calculate current market value and cost basis
+        const currentValue = Math.abs(units) * currentPrice * 100; // Options multiplier
+        const costBasis = Math.abs(units) * avgPurchasePrice;
+        
+        // Calculate P&L (consider if position is long or short)
+        let pnl;
+        if (units > 0) {
+          // Long position: current value - cost basis
+          pnl = currentValue - costBasis;
+        } else {
+          // Short position: cost basis - current value
+          pnl = costBasis - currentValue;
+        }
+        
         return profitabilityFilter === 'profitable' ? pnl > 0 : pnl < 0;
       });
     }
 
-    // Filter by position size (based on total value)
-    if (sizeFilter !== 'all') {
-      const getSizeCategory = (value: number) => {
-        if (value >= 10000) return 'large';
-        if (value >= 1000) return 'medium';
-        return 'small';
-      };
-
+    // Filter by position size range (min/max) - updated for SnapTrade API structure
+    const minPos = minPositionSize && !isNaN(parseFloat(minPositionSize)) ? parseFloat(minPositionSize) : null;
+    const maxPos = maxPositionSize && !isNaN(parseFloat(maxPositionSize)) ? parseFloat(maxPositionSize) : null;
+    
+    if (minPos !== null || maxPos !== null) {
       filteredEquities = filteredEquities.filter(position => {
-        const value = Math.abs((position.units || 0) * (position.price || 0));
-        return getSizeCategory(value) === sizeFilter;
+        const units = position.units || 0;
+        const price = position.price || 0;
+        const value = Math.abs(units * price); // Position value
+        if (minPos !== null && value < minPos) return false;
+        if (maxPos !== null && value > maxPos) return false;
+        return true;
       });
       
       filteredOptions = filteredOptions.filter(option => {
-        const value = Math.abs((option.units || 0) * (option.price || 0) * 100);
-        return getSizeCategory(value) === sizeFilter;
-      });
-    }
-
-    // Filter by minimum value
-    if (minValue && !isNaN(parseFloat(minValue))) {
-      const minVal = parseFloat(minValue);
-      
-      filteredEquities = filteredEquities.filter(position => {
-        const value = Math.abs((position.units || 0) * (position.price || 0));
-        return value >= minVal;
-      });
-      
-      filteredOptions = filteredOptions.filter(option => {
-        const value = Math.abs((option.units || 0) * (option.price || 0) * 100);
-        return value >= minVal;
+        const units = Math.abs(option.units || 0);
+        const price = option.price || 0;
+        const value = units * price * 100; // Options value with multiplier
+        if (minPos !== null && value < minPos) return false;
+        if (maxPos !== null && value > maxPos) return false;
+        return true;
       });
     }
     
@@ -375,7 +439,7 @@ const PositionsPage = () => {
     console.log('Filtered equities:', filteredEquities);
     console.log('Filtered options:', filteredOptions);
     return { equities: filteredEquities, options: filteredOptions };
-  }, [safePositions, safeOptionPositions, filter, positionType, profitabilityFilter, sizeFilter, minValue]);
+  }, [safePositions, safeOptionPositions, filter, positionType, profitabilityFilter, minPositionSize, maxPositionSize]);
 
   if (isLoading) return <div>Loading...</div>;
   if (error) return <p>Error loading holdings: {String(error)}</p>;
@@ -457,13 +521,10 @@ const PositionsPage = () => {
           <tbody>
             {data.map((position, index) => {
               if (!position) return null;
-              let rawSymbol: unknown = position.symbol?.symbol;
-              let symbolToDisplay =
-                typeof rawSymbol === 'string'
-                  ? rawSymbol
-                  : rawSymbol && typeof rawSymbol === 'object' && 'symbol' in rawSymbol && typeof rawSymbol.symbol === 'string'
-                  ? rawSymbol.symbol
-                  : position.symbol?.description || position.symbol?.local_id || '-';
+              // Updated for SnapTrade API structure: symbol.symbol.symbol
+              const symbolToDisplay = position.symbol?.symbol?.symbol || 
+                                    position.symbol?.description || 
+                                    position.symbol?.local_id || '-';
               return (
                 <tr key={index} className="border-b border-gray-100 dark:border-zinc-800 hover:bg-gray-50 dark:hover:bg-zinc-800/50">
                   {visibleEquityColumns.map((col) => (
@@ -627,14 +688,19 @@ const PositionsPage = () => {
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
         <div>
           <label htmlFor="filter" className="block text-sm font-medium mb-1">Filter by Symbol</label>
-          <input
+          <select
             id="filter"
-            type="text"
-            placeholder="Enter symbol..."
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
             className="w-full px-3 py-2 border border-gray-300 dark:border-zinc-600 rounded-md bg-white dark:bg-zinc-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
-          />
+          >
+            <option value="">All Symbols</option>
+            {availableSymbols.map((symbol, index) => (
+              <option key={`symbol-${symbol}-${index}`} value={symbol}>
+                {symbol}
+              </option>
+            ))}
+          </select>
         </div>
         
         <div>
@@ -660,12 +726,15 @@ const PositionsPage = () => {
           <select
             id="positionTypeFilter"
             value={positionType}
-            onChange={(e) => setPositionType(e.target.value as 'all' | 'stocks' | 'options')}
+            onChange={(e) => setPositionType(e.target.value as 'all' | 'common_stock' | 'options' | 'crypto' | 'etf' | 'bond')}
             className="w-full px-3 py-2 border border-gray-300 dark:border-zinc-600 rounded-md bg-white dark:bg-zinc-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
           >
             <option value="all">All Types</option>
-            <option value="stocks">Stocks Only</option>
-            <option value="options">Options Only</option>
+            <option value="common_stock">Common Stock</option>
+            <option value="options">Options</option>
+            <option value="crypto">Crypto</option>
+            <option value="etf">ETFs</option>
+            <option value="bond">Bonds</option>
           </select>
         </div>
 
@@ -683,56 +752,193 @@ const PositionsPage = () => {
           </select>
         </div>
 
-        <div>
-          <label htmlFor="sizeFilter" className="block text-sm font-medium mb-1">Position Size</label>
+        <div className="relative" ref={positionSizeDropdownRef}>
+          <label htmlFor="positionSizeFilter" className="block text-sm font-medium mb-1">Position Size</label>
+          <div className="relative">
+            <select
+              id="positionSizeFilter"
+              value=""
+              onChange={() => {}}
+              onFocus={(e) => {
+                e.preventDefault();
+                setShowPositionSizeDropdown(!showPositionSizeDropdown);
+                e.target.blur();
+              }}
+              onMouseDown={(e) => {
+                e.preventDefault();
+                setShowPositionSizeDropdown(!showPositionSizeDropdown);
+              }}
+              className="w-full px-3 py-2 border border-gray-300 dark:border-zinc-600 rounded-md bg-white dark:bg-zinc-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer"
+              title="Position Size Filter"
+            >
+              <option value="">
+                {(minPositionSize || maxPositionSize) 
+                  ? `${minPositionSize ? `$${minPositionSize}` : '0'} - ${maxPositionSize ? `$${maxPositionSize}` : '∞'}`
+                  : 'All Sizes'
+                }
+              </option>
+            </select>
+          </div>
+          
+          {showPositionSizeDropdown && (
+            <div className="absolute top-full left-0 right-0 mt-1 bg-white dark:bg-zinc-800 border border-gray-300 dark:border-zinc-600 rounded-md shadow-lg z-10 p-4">
+              <div className="space-y-3">
+                <div>
+                  <label htmlFor="minPositionSizeInput" className="block text-xs font-medium mb-1">Min Size ($)</label>
+                  <input
+                    id="minPositionSizeInput"
+                    type="number"
+                    placeholder="e.g. 1000"
+                    value={minPositionSize}
+                    onChange={(e) => setMinPositionSize(e.target.value)}
+                    className="w-full px-2 py-1 text-sm border border-gray-300 dark:border-zinc-600 rounded bg-white dark:bg-zinc-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  />
+                </div>
+                <div>
+                  <label htmlFor="maxPositionSizeInput" className="block text-xs font-medium mb-1">Max Size ($)</label>
+                  <input
+                    id="maxPositionSizeInput"
+                    type="number"
+                    placeholder="e.g. 50000"
+                    value={maxPositionSize}
+                    onChange={(e) => setMaxPositionSize(e.target.value)}
+                    className="w-full px-2 py-1 text-sm border border-gray-300 dark:border-zinc-600 rounded bg-white dark:bg-zinc-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  />
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMinPositionSize('');
+                      setMaxPositionSize('');
+                    }}
+                    className="flex-1 px-2 py-1 text-xs bg-gray-100 dark:bg-zinc-700 text-gray-700 dark:text-gray-300 rounded hover:bg-gray-200 dark:hover:bg-zinc-600 transition-colors"
+                  >
+                    Clear
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowPositionSizeDropdown(false)}
+                    className="flex-1 px-2 py-1 text-xs bg-blue-500 text-white rounded hover:bg-blue-600 transition-colors"
+                  >
+                    Apply
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Clear Filters Dropdown */}
+        <div className="relative" ref={clearFiltersDropdownRef}>
+          <label htmlFor="clearFiltersSelect" className="block text-sm font-medium mb-1">Clear Filters</label>
           <select
-            id="sizeFilter"
-            value={sizeFilter}
-            onChange={(e) => setSizeFilter(e.target.value as 'all' | 'large' | 'medium' | 'small')}
-            className="w-full px-3 py-2 border border-gray-300 dark:border-zinc-600 rounded-md bg-white dark:bg-zinc-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            id="clearFiltersSelect"
+            value=""
+            onChange={() => {}}
+            onFocus={(e) => {
+              e.preventDefault();
+              setShowClearFiltersDropdown(!showClearFiltersDropdown);
+              e.target.blur();
+            }}
+            onMouseDown={(e) => {
+              e.preventDefault();
+              setShowClearFiltersDropdown(!showClearFiltersDropdown);
+            }}
+            className="w-full px-3 py-2 border border-gray-300 dark:border-zinc-600 rounded-md bg-white dark:bg-zinc-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer"
+            title="Clear Filters Options"
           >
-            <option value="all">All Sizes</option>
-            <option value="large">Large ($10K+)</option>
-            <option value="medium">Medium ($1K-$10K)</option>
-            <option value="small">Small (&lt;$1K)</option>
+            <option value="">All Filters</option>
           </select>
-        </div>
-
-        <div>
-          <label htmlFor="minValueFilter" className="block text-sm font-medium mb-1">Minimum Value ($)</label>
-          <input
-            id="minValueFilter"
-            type="number"
-            placeholder="e.g. 1000"
-            value={minValue}
-            onChange={(e) => setMinValue(e.target.value)}
-            className="w-full px-3 py-2 border border-gray-300 dark:border-zinc-600 rounded-md bg-white dark:bg-zinc-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
-          />
+          
+          {showClearFiltersDropdown && (
+            <div className="absolute top-full left-0 right-0 mt-1 bg-white dark:bg-zinc-800 border border-gray-300 dark:border-zinc-600 rounded-md shadow-lg z-10 py-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setFilter('');
+                  setSelectedAccount('all');
+                  setPositionType('all');
+                  setProfitabilityFilter('all');
+                  setMinPositionSize('');
+                  setMaxPositionSize('');
+                  setShowPositionSizeDropdown(false);
+                  setShowClearFiltersDropdown(false);
+                }}
+                className="w-full px-4 py-2 text-left text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-zinc-700 transition-colors"
+                title="Clear all filter options"
+              >
+                All Filters
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setFilter('');
+                  setShowClearFiltersDropdown(false);
+                }}
+                className="w-full px-4 py-2 text-left text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-zinc-700 transition-colors"
+                title="Clear symbol filter"
+              >
+                Symbol Filter
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setSelectedAccount('all');
+                  setShowClearFiltersDropdown(false);
+                }}
+                className="w-full px-4 py-2 text-left text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-zinc-700 transition-colors"
+                title="Clear account filter"
+              >
+                Account Filter
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setPositionType('all');
+                  setShowClearFiltersDropdown(false);
+                }}
+                className="w-full px-4 py-2 text-left text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-zinc-700 transition-colors"
+                title="Clear position type filter"
+              >
+                Position Type Filter
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setProfitabilityFilter('all');
+                  setShowClearFiltersDropdown(false);
+                }}
+                className="w-full px-4 py-2 text-left text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-zinc-700 transition-colors"
+                title="Clear profitability filter"
+              >
+                Profitability Filter
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setMinPositionSize('');
+                  setMaxPositionSize('');
+                  setShowPositionSizeDropdown(false);
+                  setShowClearFiltersDropdown(false);
+                }}
+                className="w-full px-4 py-2 text-left text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-zinc-700 transition-colors"
+                title="Clear position size filter"
+              >
+                Position Size Filter
+              </button>
+            </div>
+          )}
         </div>
       </div>
 
-      {/* Clear Filters Button */}
-      <div className="mb-4">
-        <button
-          onClick={() => {
-            setFilter('');
-            setSelectedAccount('all');
-            setPositionType('all');
-            setProfitabilityFilter('all');
-            setSizeFilter('all');
-            setMinValue('');
-          }}
-          className="px-4 py-2 text-sm bg-gray-100 dark:bg-zinc-700 text-gray-700 dark:text-gray-300 rounded-md hover:bg-gray-200 dark:hover:bg-zinc-600 transition-colors"
-        >
-          Clear All Filters
-        </button>
-      </div>
 
       <div className="flex flex-col gap-6 w-full">
         {/* Options Section */}
         <div className="bg-white dark:bg-zinc-900 rounded-lg shadow-md border border-gray-200 dark:border-zinc-700">
           <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-zinc-700">
             <button
+              type="button"
               onClick={() => setOptionsExpanded(!optionsExpanded)}
               className="flex items-center gap-3 text-lg font-semibold cursor-pointer hover:text-blue-600 dark:hover:text-blue-400 transition-colors"
             >
@@ -828,6 +1034,7 @@ const PositionsPage = () => {
         <div className="bg-white dark:bg-zinc-900 rounded-lg shadow-md border border-gray-200 dark:border-zinc-700">
           <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-zinc-700">
             <button
+              type="button"
               onClick={() => setEquitiesExpanded(!equitiesExpanded)}
               className="flex items-center gap-3 text-lg font-semibold cursor-pointer hover:text-blue-600 dark:hover:text-blue-400 transition-colors"
             >

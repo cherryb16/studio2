@@ -40,14 +40,29 @@ export function useCachedAccounts(options: UseCachedAccountsOptions = {}) {
           return [];
         }
 
-        return await CacheService.getAccounts(
-          user.uid,
-          credentials.snaptradeUserId,
-          credentials.userSecret,
-          forceRefresh
-        );
+        // Try to get accounts from cache service, but fallback to direct API call if cache fails
+        try {
+          return await CacheService.getAccounts(
+            user.uid,
+            credentials.snaptradeUserId,
+            credentials.userSecret,
+            forceRefresh
+          );
+        } catch (cacheError) {
+          console.warn('Cache service failed, falling back to direct API call:', cacheError);
+          
+          // Direct API call as fallback
+          const response = await fetch(`/api/snaptrade/accounts?snaptradeUserId=${encodeURIComponent(credentials.snaptradeUserId)}&userSecret=${encodeURIComponent(credentials.userSecret)}`);
+          
+          if (!response.ok) {
+            throw new Error(`Failed to fetch accounts: ${response.status}`);
+          }
+          
+          return await response.json();
+        }
       } catch (error) {
         console.error('Error in cached accounts query:', error);
+        // Don't throw here - return empty array to prevent UI crashes
         return [];
       }
     },
@@ -55,10 +70,8 @@ export function useCachedAccounts(options: UseCachedAccountsOptions = {}) {
     staleTime,
     // Don't refetch on window focus for cached data
     refetchOnWindowFocus: false,
-    // Keep cached data while fetching new data
-    keepPreviousData: true,
-    // Add retry with exponential backoff
-    retry: 3,
+    // Add retry with exponential backoff, but reduce retries to avoid Firebase quota issues
+    retry: 1,
     retryDelay: (attemptIndex) => Math.min(1000 * 2 ** attemptIndex, 30000),
   });
 

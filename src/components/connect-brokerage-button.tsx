@@ -74,4 +74,4 @@ export const ConnectBrokerageButton = forwardRef<HTMLButtonElement>((props, ref)
   );
 });
 
-ConnectBrokerageButton.displayName = 'ConnectBrokerageButton';
+ConnectBrokerageButton.displayName = 'ConnectBrokerageButton';2

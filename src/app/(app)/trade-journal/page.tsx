@@ -17,16 +17,8 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
 import {
   Table,
   TableBody,
@@ -44,10 +36,7 @@ import {
 import { Textarea } from '@/components/ui/textarea';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { 
-  TrendingUp, 
-  TrendingDown, 
   FileText, 
-  Calendar,
   DollarSign,
   Activity,
   Target,
@@ -316,6 +305,7 @@ export default function EnhancedTradeJournalPage() {
 
   // Filter states
   const [selectedAccount, setSelectedAccount] = useState<string>('all');
+  const [selectedSymbol, setSelectedSymbol] = useState<string>('all');
   const [selectedType, setSelectedType] = useState<'all' | 'stocks' | 'options'>('all');
   const [selectedPnL, setSelectedPnL] = useState<'all' | 'wins' | 'losses' | 'closed' | 'open'>('all');
   
@@ -490,6 +480,17 @@ export default function EnhancedTradeJournalPage() {
   // Use cached accounts directly - no need for fallback logic
   const effectiveAccounts = accounts;
 
+  // Get unique symbols for dropdown
+  const availableSymbols = React.useMemo(() => {
+    if (!tradesArray.length) return [];
+    
+    const symbols = tradesArray
+      .map(trade => trade.symbol)
+      .filter((symbol): symbol is string => Boolean(symbol) && typeof symbol === 'string');
+    
+    return [...new Set(symbols)].sort();
+  }, [tradesArray]);
+
   // Calculate filtered stats and grouped trades in a single useMemo to prevent dependency issues
   // This must be called before any early returns to maintain hook order
   const { filteredGroupedTrades, filteredStats } = React.useMemo(() => {
@@ -504,6 +505,11 @@ export default function EnhancedTradeJournalPage() {
     const accountAndTypeFilteredTrades = tradesArray.filter((trade) => {
       // Account filter
       if (selectedAccount !== 'all' && trade.accountId !== selectedAccount) {
+        return false;
+      }
+
+      // Symbol filter
+      if (selectedSymbol !== 'all' && trade.symbol !== selectedSymbol) {
         return false;
       }
 
@@ -648,7 +654,7 @@ export default function EnhancedTradeJournalPage() {
     }
 
     return { filteredGroupedTrades, filteredStats };
-  }, [tradesArray, selectedAccount, selectedType, selectedPnL, stats, effectiveAccounts]);
+  }, [tradesArray, selectedAccount, selectedSymbol, selectedType, selectedPnL, stats, effectiveAccounts]);
 
   // Debug logging
   console.log('Accounts state:', { 
@@ -952,7 +958,7 @@ export default function EnhancedTradeJournalPage() {
             aria-label="Select Account"
             value={selectedAccount || 'all'}
             onChange={e => setSelectedAccount(e.target.value === 'all' ? 'all' : e.target.value)}
-            className="border rounded p-2 w-[180px]"
+            className="border rounded p-2 w-[150px]"
           >
             <option value="all">All Accounts</option>
             {Array.isArray(effectiveAccounts) &&
@@ -965,33 +971,56 @@ export default function EnhancedTradeJournalPage() {
         </div>
 
         <div className="flex items-center gap-2">
+          <label className="text-sm font-medium">Symbol:</label>
+          <select
+            id="symbolSelect"
+            title="Filter by Symbol"
+            aria-label="Filter by Symbol"
+            value={selectedSymbol}
+            onChange={e => setSelectedSymbol(e.target.value)}
+            className="border rounded p-2 w-[150px]"
+          >
+            <option value="all">All</option>
+            {availableSymbols.map((symbol) => (
+              <option key={symbol} value={symbol}>
+                {symbol}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div className="flex items-center gap-2">
           <label className="text-sm font-medium">Type:</label>
-          <Select value={selectedType} onValueChange={(value) => setSelectedType(value as 'all' | 'stocks' | 'options')}>
-            <SelectTrigger className="w-[120px]">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All</SelectItem>
-              <SelectItem value="stocks">Stocks</SelectItem>
-              <SelectItem value="options">Options</SelectItem>
-            </SelectContent>
-          </Select>
+          <select
+            id="typeSelect"
+            title="Filter by Type"
+            aria-label="Filter by Type"
+            value={selectedType}
+            onChange={e => setSelectedType(e.target.value as 'all' | 'stocks' | 'options')}
+            className="border rounded p-2 w-[150px]"
+          >
+            <option value="all">All</option>
+            <option value="stocks">Stocks</option>
+            <option value="options">Options</option>
+          </select>
         </div>
 
         <div className="flex items-center gap-2">
           <label className="text-sm font-medium">Results:</label>
-          <Select value={selectedPnL} onValueChange={(value) => setSelectedPnL(value as 'all' | 'wins' | 'losses' | 'closed' | 'open')}>
-            <SelectTrigger className="w-[120px]">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All</SelectItem>
-              <SelectItem value="wins">Wins only</SelectItem>
-              <SelectItem value="losses">Losses only</SelectItem>
-              <SelectItem value="closed">Closed only</SelectItem>
-              <SelectItem value="open">Open only</SelectItem>
-            </SelectContent>
-          </Select>
+          <select
+            id="resultsSelect"
+            title="Filter by Results"
+            aria-label="Filter by Results"
+            value={selectedPnL}
+            onChange={e => setSelectedPnL(e.target.value as 'all' | 'wins' | 'losses' | 'closed' | 'open')}
+            className="border rounded p-2 w-[150px]"
+          >
+            <option value="all">All</option>
+            <option value="wins">Wins only</option>
+            <option value="losses">Losses only</option>
+            <option value="closed">Closed only</option>
+            <option value="open">Open only</option>
+          </select>
         </div>
 
         <div className="text-sm text-muted-foreground">
