@@ -224,6 +224,10 @@ const PositionsPage = () => {
   const positionSizeDropdownRef = useRef<HTMLDivElement>(null);
   const clearFiltersDropdownRef = useRef<HTMLDivElement>(null);
 
+  // Sorting state
+  const [sortColumn, setSortColumn] = useState<string>('');
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
+
   // Close dropdowns when clicking outside
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {

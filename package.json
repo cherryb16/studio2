@@ -11,14 +11,14 @@
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
     
-    "cf:build": "npx opennextjs-cloudflare",
-    "cf:preview": "npm run cf:build && wrangler dev",
-    "cf:deploy": "npm run cf:build && wrangler deploy",
+    "cf:build": "npm run build",
+    "cf:preview": "npm run cf:build && wrangler pages dev .next",
+    "cf:deploy": "npm run cf:build && wrangler pages deploy .next",
     "cf:types": "wrangler types",
     
-    "build:cf": "npm run build && npm run cf:build",
-    "preview": "npm run build:cf && wrangler dev",
-    "deploy": "npm run build:cf && wrangler deploy"
+    "build:cf": "npm run build",
+    "preview": "npm run build:cf && wrangler pages dev .next",
+    "deploy": "npm run build:cf && wrangler pages deploy .next"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
