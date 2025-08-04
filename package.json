@@ -12,13 +12,12 @@
     "typecheck": "tsc --noEmit",
     
     "cf:build": "npm run build",
-    "cf:preview": "npm run cf:build && wrangler pages dev .next",
-    "cf:deploy": "npm run cf:build && wrangler pages deploy .next",
-    "cf:types": "wrangler types",
+    "cf:preview": "npm run cf:build && npx wrangler pages dev .next",
+    "cf:deploy": "npm run cf:build && npx wrangler pages deploy .next --project-name=trade-insights-pro",
     
     "build:cf": "npm run build",
-    "preview": "npm run build:cf && wrangler pages dev .next",
-    "deploy": "npm run build:cf && wrangler pages deploy .next"
+    "preview": "npm run build:cf && npx wrangler pages dev .next",
+    "deploy": "npm run build:cf && npx wrangler pages deploy .next --project-name=trade-insights-pro"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
