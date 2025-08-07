@@ -44,3 +44,8 @@ next-env.d.ts
 firebase-debug.log
 firestore-debug.log
 firebase-service-account.json
+.firebase/
+functions/node_modules/
+functions/.next/
+functions/lib/
+functions/*.tsbuildinfo
