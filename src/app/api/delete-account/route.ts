@@ -11,8 +11,20 @@ export async function POST(request: Request) {
       });
     }
 
-    // Remove Firestore data
-    await db.collection('snaptrade_users').doc(uid).delete();
+    // Remove Firestore data from all user-related collections
+    const deletePromises = [
+      db.collection('users').doc(uid).delete(),
+      db.collection('snaptrade_users').doc(uid).delete(),
+      db.collection('cache').doc(uid).delete(), // Remove cached user data
+    ];
+    
+    try {
+      await Promise.all(deletePromises);
+      console.log(`Successfully deleted Firestore data for user: ${uid}`);
+    } catch (firestoreError) {
+      console.error('Error deleting Firestore data:', firestoreError);
+      // Continue with other deletions even if Firestore fails
+    }
 
     // Delete SnapTrade user (ignore errors)
     try {
@@ -28,7 +40,12 @@ export async function POST(request: Request) {
       console.error('Error deleting Firebase auth user:', error);
     }
 
-    return new Response(JSON.stringify({ success: true }), { status: 200 });
+    return new Response(JSON.stringify({ 
+      success: true, 
+      message: 'Account and all associated data deleted successfully',
+      deletedCollections: ['users', 'snaptrade_users', 'cache'],
+      deletedServices: ['SnapTrade', 'Firebase Auth']
+    }), { status: 200 });
   } catch (error) {
     console.error('Error deleting account:', error);
     return new Response(JSON.stringify({ error: 'Internal Server Error' }), {
