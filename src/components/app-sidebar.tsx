@@ -17,10 +17,13 @@ const mainNav = [
     href: '/trade-journal',
     title: 'Trade Journal',
   },
-
   {
     href: '/positions',
     title: 'Positions',
+  },
+  {
+    href: '/pricing',
+    title: 'Pricing',
   },
 ];
 

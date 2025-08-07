@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useAuth } from '@/hooks/use-auth';
+import { PaywallWrapper } from '@/components/paywall-wrapper';
 import { 
   getAnalyticsActivities, 
   getAnalyticsSummaryStats,
@@ -53,7 +54,7 @@ import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContai
 
 const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884D8', '#82CA9D'];
 
-export default function AdvancedAnalyticsPage() {
+function AdvancedAnalyticsContent() {
   const { user } = useAuth();
   const [selectedPeriod, setSelectedPeriod] = useState<'day' | 'week' | 'month' | 'year' | 'all'>('month');
   const [activeTab, setActiveTab] = useState('overview');
@@ -595,5 +596,17 @@ export default function AdvancedAnalyticsPage() {
         </TabsContent>
       </Tabs>
     </div>
+  );
+}
+
+export default function AdvancedAnalyticsPage() {
+  return (
+    <PaywallWrapper 
+      requiredPlan="pro" 
+      feature="Advanced Analytics"
+      description="Get detailed insights into your trading performance, risk analysis, and portfolio optimization with our advanced analytics suite."
+    >
+      <AdvancedAnalyticsContent />
+    </PaywallWrapper>
   );
 }

@@ -4,6 +4,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { ConnectBrokerageButton } from '@/components/connect-brokerage-button';
+import { SubscriptionManagement } from '@/components/subscription-management';
 import { useAuth } from '@/hooks/use-auth';
 import { useCachedAccounts } from '@/hooks/use-cached-accounts';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
@@ -120,6 +121,8 @@ const SettingsPage = () => {
           </div>
         </CardContent>
       </Card>
+
+      <SubscriptionManagement />
 
       <Card>
         <CardHeader>

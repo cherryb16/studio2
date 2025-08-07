@@ -3,6 +3,8 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useAuth } from '@/hooks/use-auth';
+import { PaywallWrapper } from '@/components/paywall-wrapper';
+import { useSubscription } from '@/hooks/use-subscription';
 import { Card, CardContent, CardHeader, CardDescription, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -158,22 +160,26 @@ const DashboardPage = () => {
 
           {/* Risk */}
           <TabsContent value="risk">
-            <div className="grid md:grid-cols-2 gap-4">
-              <RiskSummary riskData={riskData} />
-              <TaxOptimization riskData={riskData} />
-            </div>
+            <PaywallWrapper requiredPlan="pro" feature="Risk Analysis" description="Advanced risk metrics and tax optimization strategies to help improve your portfolio performance.">
+              <div className="grid md:grid-cols-2 gap-4">
+                <RiskSummary riskData={riskData} />
+                <TaxOptimization riskData={riskData} />
+              </div>
+            </PaywallWrapper>
           </TabsContent>
 
           {/* Performance */}
           <TabsContent value="performance">
             <PerformanceSummary performanceData={performanceData} />
-            {riskData?.performanceAttribution && (
-              <PerformanceAttribution performanceAttribution={riskData.performanceAttribution} />
-            )}
-            {/* Only pass analyticsData when it's not null */}
-            {analyticsData && (
-              <PerformanceChart />
-            )}
+            <PaywallWrapper requiredPlan="pro" feature="Performance Attribution" description="Detailed performance breakdown and attribution analysis to understand what drives your returns.">
+              {riskData?.performanceAttribution && (
+                <PerformanceAttribution performanceAttribution={riskData.performanceAttribution} />
+              )}
+              {/* Only pass analyticsData when it's not null */}
+              {analyticsData && (
+                <PerformanceChart />
+              )}
+            </PaywallWrapper>
           </TabsContent>
 
           {/* Insights */}
