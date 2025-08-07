@@ -1,22 +1,49 @@
 // src/app/(app)/settings/page.tsx
 'use client';
 
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { ConnectBrokerageButton } from '@/components/connect-brokerage-button';
 import { useAuth } from '@/hooks/use-auth';
+import { useCachedAccounts } from '@/hooks/use-cached-accounts';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
+import { Skeleton } from '@/components/ui/skeleton';
 
 const SettingsPage = () => {
   const { user, logOut } = useAuth();
+  const { accounts, isLoading: accountsLoading } = useCachedAccounts();
+  const [userProfile, setUserProfile] = useState<any>(null);
+  const [profileLoading, setProfileLoading] = useState(true);
   const router = useRouter();
   const searchParams = useSearchParams();
   const connectButtonRef = useRef<HTMLButtonElement>(null);
 
+  // Fetch user profile data
+  useEffect(() => {
+    const fetchUserProfile = async () => {
+      if (!user?.uid) return;
+      
+      try {
+        const response = await fetch(`/api/firebase/getUserData?firebaseUserId=${user.uid}`);
+        if (response.ok) {
+          const data = await response.json();
+          setUserProfile(data);
+        }
+      } catch (error) {
+        console.error('Error fetching user profile:', error);
+      } finally {
+        setProfileLoading(false);
+      }
+    };
+
+    fetchUserProfile();
+  }, [user?.uid]);
+
   // Auto-trigger brokerage connection for new users
   useEffect(() => {
-    const shouldConnect = searchParams.get('connect');
+    const shouldConnect = searchParams?.get('connect');
     if (shouldConnect === 'true' && connectButtonRef.current) {
       // Small delay to ensure the component is fully rendered
       setTimeout(() => {
@@ -49,9 +76,48 @@ const SettingsPage = () => {
         <CardHeader>
           <CardTitle>Profile</CardTitle>
         </CardHeader>
-        <CardContent className="space-y-2">
-          <p><span className="font-medium">Email:</span> {user?.email ?? 'N/A'}</p>
-          <p><span className="font-medium">User ID:</span> {user?.uid ?? 'N/A'}</p>
+        <CardContent className="space-y-4">
+          <div>
+            <span className="font-medium">Email:</span> {user?.email ?? 'N/A'}
+          </div>
+          
+          <div>
+            <span className="font-medium">Trading Experience:</span>
+            {profileLoading ? (
+              <Skeleton className="h-4 w-24 ml-2 inline-block" />
+            ) : (
+              <Badge variant="secondary" className="ml-2">
+                {userProfile?.tradingExperience || 'Not set'}
+              </Badge>
+            )}
+          </div>
+          
+          <div>
+            <span className="font-medium">Connected Accounts:</span>
+            <div className="mt-2">
+              {accountsLoading ? (
+                <div className="space-y-2">
+                  <Skeleton className="h-4 w-48" />
+                  <Skeleton className="h-4 w-40" />
+                </div>
+              ) : accounts.length > 0 ? (
+                <div className="space-y-2">
+                  {accounts.map((account: any, index: number) => (
+                    <div key={account.id || index} className="flex items-center gap-2">
+                      <Badge variant="outline">
+                        {account.institution_name || 'Unknown Institution'}
+                      </Badge>
+                      <span className="text-sm text-muted-foreground">
+                        {account.name || 'Unnamed Account'}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-sm text-muted-foreground">No accounts connected</p>
+              )}
+            </div>
+          </div>
         </CardContent>
       </Card>
 

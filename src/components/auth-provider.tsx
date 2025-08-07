@@ -184,6 +184,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     router.push('/settings?connect=true');
   };
 
+  const skipOnboarding = () => {
+    setShowOnboarding(false);
+    // Go to dashboard without brokerage connection
+    router.push('/dashboard');
+  };
+
   useEffect(() => {
     console.log('AuthProvider: Setting up auth listener');
     
@@ -260,7 +266,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   return (
     <AuthContext.Provider value={contextValue}>
       {children}
-      {showOnboarding && <OnboardingForm onComplete={completeOnboarding} />}
+      {showOnboarding && <OnboardingForm onComplete={completeOnboarding} onSkip={skipOnboarding} />}
     </AuthContext.Provider>
   );
 }

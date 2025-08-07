@@ -52,7 +52,7 @@ export default function AppSidebar({ user }: AppSidebarProps) { // Accept the us
                              <path d="M10 14l4 4"></path>
                              <path d="M14 14l-4 4"></path>
                          </svg>
-                        <span className="">AITrader</span>
+                        <span className="">Trade Insights Pro</span>
                     </Link>
                 </div>
                 <div className="flex-1">
