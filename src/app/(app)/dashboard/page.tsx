@@ -6,6 +6,7 @@ import { useAuth } from '@/hooks/use-auth';
 import { PaywallWrapper } from '@/components/paywall-wrapper';
 import { useSubscription } from '@/hooks/use-subscription';
 import { Card, CardContent, CardHeader, CardDescription, CardTitle } from '@/components/ui/card';
+import { Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -19,7 +20,7 @@ import MainValueCards from '@/components/dashboard/MainValueCards';
 import AssetAllocation from '@/components/dashboard/AssetAllocation';
 import QuickStats from '@/components/dashboard/QuickStats';
 import TopPositions from '@/components/dashboard/TopPositions';
-import SectorAllocation from '@/components/dashboard/SectorAllocation';
+// SectorAllocation removed - no longer using external sector data
 import RiskSummary from '@/components/dashboard/RiskSummary';
 import TaxOptimization from '@/components/dashboard/TaxOptimization';
 import PerformanceSummary from '@/components/dashboard/PerformanceSummary';
@@ -28,7 +29,7 @@ import InsightsPlaceholder from '@/components/dashboard/InsightsPlaceholder';
 import PerformanceChart from '@/components/dashboard/PerformanceChart';
 
 import { getSnapTradeAccounts } from '@/app/actions/snaptrade';
-import { getPortfolioAnalytics, getPerformanceMetrics } from '@/app/actions/snaptrade-enhanced';
+import { getPortfolioAnalytics, getPerformanceMetrics, getRealizedGains } from '@/app/actions/snaptrade-enhanced';
 import { generateRiskDashboard } from '@/app/actions/advanced-analytics';
 
 const DashboardPage = () => {
@@ -64,16 +65,43 @@ const DashboardPage = () => {
     enabled,
   });
 
-  const { data: riskDashboard } = useQuery({
+  const { data: riskDashboard, isLoading: riskLoading, error: riskError } = useQuery({
     queryKey: ['risk', snaptradeUserId, userSecret],
-    queryFn: () => generateRiskDashboard(snaptradeUserId!, userSecret!, 'moderate'),
+    queryFn: async () => {
+      console.log('Fetching risk dashboard data...');
+      const result = await generateRiskDashboard(snaptradeUserId!, userSecret!, 'moderate');
+      console.log('Risk dashboard result:', result);
+      return result;
+    },
     enabled,
+    retry: 1,
+    staleTime: 5 * 60 * 1000, // 5 minutes
   });
 
-  const { data: performanceMetrics } = useQuery({
+  const { data: performanceMetrics, isLoading: performanceLoading, error: performanceError } = useQuery({
     queryKey: ['performanceMetrics', snaptradeUserId, userSecret],
-    queryFn: () => getPerformanceMetrics(snaptradeUserId!, userSecret!, 'month'),
+    queryFn: async () => {
+      console.log('Fetching performance metrics...');
+      const result = await getPerformanceMetrics(snaptradeUserId!, userSecret!);
+      console.log('Performance metrics result:', result);
+      return result;
+    },
     enabled,
+    retry: 1,
+    staleTime: 5 * 60 * 1000, // 5 minutes
+  });
+
+  const { data: realizedGains, isLoading: realizedGainsLoading, error: realizedGainsError } = useQuery({
+    queryKey: ['realizedGains', snaptradeUserId, userSecret],
+    queryFn: async () => {
+      console.log('Fetching realized gains...');
+      const result = await getRealizedGains(snaptradeUserId!, userSecret!);
+      console.log('Realized gains result:', result);
+      return result;
+    },
+    enabled,
+    retry: 1,
+    staleTime: 5 * 60 * 1000, // 5 minutes
   });
 
   if (authLoading || credentialsLoading) return <div>Loading...</div>;
@@ -93,6 +121,7 @@ const DashboardPage = () => {
   const analyticsData = isError(analytics) ? null : analytics;
   const riskData = isError(riskDashboard) ? null : riskDashboard;
   const performanceData = isError(performanceMetrics) ? null : performanceMetrics;
+  const realizedGainsData = isError(realizedGains) ? null : realizedGains;
 
   return (
     <ScrollArea className="h-full">
@@ -131,6 +160,7 @@ const DashboardPage = () => {
           analyticsData={analyticsData}
           riskData={riskData}
           performanceData={performanceData}
+          realizedGainsData={realizedGainsData}
         />
 
         <Tabs value={activeTab} onValueChange={setActiveTab}>
@@ -155,31 +185,50 @@ const DashboardPage = () => {
           {/* Positions */}
           <TabsContent value="positions">
             <TopPositions analyticsData={analyticsData} />
-            {riskData?.sectorAnalysis && <SectorAllocation sectorAnalysis={riskData.sectorAnalysis} />}
+            {/* SectorAllocation component removed - no longer using external sector data */}
           </TabsContent>
 
           {/* Risk */}
           <TabsContent value="risk">
             <PaywallWrapper requiredPlan="pro" feature="Risk Analysis" description="Advanced risk metrics and tax optimization strategies to help improve your portfolio performance.">
-              <div className="grid md:grid-cols-2 gap-4">
-                <RiskSummary riskData={riskData} />
-                <TaxOptimization riskData={riskData} />
-              </div>
+              {riskLoading ? (
+                <div className="grid md:grid-cols-2 gap-4">
+                  <Card><CardContent className="p-6"><div className="animate-pulse"><div className="h-4 bg-gray-200 rounded w-3/4 mb-2"></div><div className="h-4 bg-gray-200 rounded w-1/2"></div></div></CardContent></Card>
+                  <Card><CardContent className="p-6"><div className="animate-pulse"><div className="h-4 bg-gray-200 rounded w-3/4 mb-2"></div><div className="h-4 bg-gray-200 rounded w-1/2"></div></div></CardContent></Card>
+                </div>
+              ) : riskError ? (
+                <Card><CardContent className="p-6 text-center text-red-600">Error loading risk data: {riskError.message}</CardContent></Card>
+              ) : riskData ? (
+                <div className="grid md:grid-cols-2 gap-4">
+                  <RiskSummary riskData={riskData} />
+                  <TaxOptimization riskData={riskData} />
+                </div>
+              ) : (
+                <Card><CardContent className="p-6 text-center text-muted-foreground">No risk data available. Please ensure you have positions in your connected accounts.</CardContent></Card>
+              )}
             </PaywallWrapper>
           </TabsContent>
 
           {/* Performance */}
           <TabsContent value="performance">
-            <PerformanceSummary performanceData={performanceData} />
-            <PaywallWrapper requiredPlan="pro" feature="Performance Attribution" description="Detailed performance breakdown and attribution analysis to understand what drives your returns.">
-              {riskData?.performanceAttribution && (
-                <PerformanceAttribution performanceAttribution={riskData.performanceAttribution} />
-              )}
-              {/* Only pass analyticsData when it's not null */}
-              {analyticsData && (
-                <PerformanceChart />
-              )}
-            </PaywallWrapper>
+            {performanceLoading ? (
+              <Card><CardContent className="p-6"><div className="animate-pulse"><div className="h-4 bg-gray-200 rounded w-3/4 mb-2"></div><div className="h-4 bg-gray-200 rounded w-1/2"></div></div></CardContent></Card>
+            ) : performanceError ? (
+              <Card><CardContent className="p-6 text-center text-red-600">Error loading performance data: {performanceError.message}</CardContent></Card>
+            ) : (
+              <>
+                <PerformanceSummary performanceData={performanceData} />
+                <PaywallWrapper requiredPlan="pro" feature="Performance Attribution" description="Detailed performance breakdown and attribution analysis to understand what drives your returns.">
+                  {riskData?.performanceAttribution && (
+                    <PerformanceAttribution performanceAttribution={riskData.performanceAttribution} />
+                  )}
+                  {/* Pass performanceData to the chart */}
+                  {performanceData && (
+                    <PerformanceChart performanceData={performanceData} />
+                  )}
+                </PaywallWrapper>
+              </>
+            )}
           </TabsContent>
 
           {/* Insights */}

@@ -115,78 +115,119 @@ export async function getSnapTradeTrades(
 
     const allTrades: SnapTradeTrade[] = [];
 
-    // Try multiple approaches to fetch activities
-    const attempts = [
-      {
-        name: 'All activities without type filter',
-        params: {
-          userId: snaptradeUserId,
-          userSecret: userSecret,
-          accounts: accountIds.join(','),
-          startDate: startDate?.toISOString().split('T')[0],
-          endDate: endDate?.toISOString().split('T')[0],
+    // Paginated fetch with multiple requests to get all trades
+    const fetchTradesWithPagination = async (currentEndDate?: Date): Promise<boolean> => {
+      const attempts = [
+        {
+          name: 'All activities without type filter',
+          params: {
+            userId: snaptradeUserId,
+            userSecret: userSecret,
+            accounts: accountIds.join(','),
+            startDate: startDate?.toISOString().split('T')[0],
+            endDate: currentEndDate?.toISOString().split('T')[0] || endDate?.toISOString().split('T')[0],
+          }
+        },
+        {
+          name: 'Trade and option activities',
+          params: {
+            userId: snaptradeUserId,
+            userSecret: userSecret,
+            accounts: accountIds.join(','),
+            startDate: startDate?.toISOString().split('T')[0],
+            endDate: currentEndDate?.toISOString().split('T')[0] || endDate?.toISOString().split('T')[0],
+            type: 'BUY,SELL,OPTIONEXPIRATION,OPTIONASSIGNMENT,OPTIONEXERCISE',
+          }
+        },
+        {
+          name: 'No date filter',
+          params: {
+            userId: snaptradeUserId,
+            userSecret: userSecret,
+            accounts: accountIds.join(','),
+            ...(currentEndDate && { endDate: currentEndDate.toISOString().split('T')[0] })
+          }
         }
-      },
-      {
-        name: 'Trade and option activities',
-        params: {
-          userId: snaptradeUserId,
-          userSecret: userSecret,
-          accounts: accountIds.join(','),
-          startDate: startDate?.toISOString().split('T')[0],
-          endDate: endDate?.toISOString().split('T')[0],
-          type: 'BUY,SELL,OPTIONEXPIRATION,OPTIONASSIGNMENT,OPTIONEXERCISE',
-        }
-      },
-      {
-        name: 'No date filter',
-        params: {
-          userId: snaptradeUserId,
-          userSecret: userSecret,
-          accounts: accountIds.join(','),
-        }
-      }
-    ];
+      ];
 
-    for (const attempt of attempts) {
-      try {
-        console.log(`=== Attempting: ${attempt.name} ===`);
-        console.log('Request parameters:', {
-          ...attempt.params,
-          userSecret: userSecret ? `${userSecret.substring(0, 8)}...` : 'undefined'
-        });
-        
-        const activitiesResponse = await snaptrade.transactionsAndReporting.getActivities(attempt.params);
-
-        console.log('=== Activities API Response ===');
-        console.log('Response status:', activitiesResponse.status);
-        console.log('Response headers:', activitiesResponse.headers);
-        console.log('Response data type:', typeof activitiesResponse.data);
-        console.log('Response data length:', Array.isArray(activitiesResponse.data) ? activitiesResponse.data.length : 'not array');
-        
-        if (activitiesResponse.data && Array.isArray(activitiesResponse.data) && activitiesResponse.data.length > 0) {
-          console.log(`✅ SUCCESS: Found ${activitiesResponse.data.length} activities with ${attempt.name}`);
-          console.log('First activity sample:', JSON.stringify(activitiesResponse.data[0], null, 2));
-          console.log('Sample activity fields:', Object.keys(activitiesResponse.data[0]));
+      for (const attempt of attempts) {
+        try {
+          console.log(`=== Attempting: ${attempt.name} ${currentEndDate ? `(paginated, endDate: ${currentEndDate.toISOString().split('T')[0]})` : '(initial)'} ===`);
+          console.log('Request parameters:', {
+            ...attempt.params,
+            userSecret: userSecret ? `${userSecret.substring(0, 8)}...` : 'undefined'
+          });
           
-          // Filter for trade types if we got all activities
-          const tradeActivities = attempt.name.includes('All activities') 
-            ? activitiesResponse.data.filter((activity: any) => 
-                ['BUY', 'SELL', 'OPTIONEXPIRATION', 'OPTIONASSIGNMENT', 'OPTIONEXERCISE'].includes(activity.type)
-              )
-            : activitiesResponse.data;
+          const activitiesResponse = await snaptrade.transactionsAndReporting.getActivities(attempt.params);
+
+          console.log('=== Activities API Response ===');
+          console.log('Response status:', activitiesResponse.status);
+          console.log('Response data type:', typeof activitiesResponse.data);
+          console.log('Response data length:', Array.isArray(activitiesResponse.data) ? activitiesResponse.data.length : 'not array');
+          
+          if (activitiesResponse.data && Array.isArray(activitiesResponse.data) && activitiesResponse.data.length > 0) {
+            console.log(`✅ SUCCESS: Found ${activitiesResponse.data.length} activities with ${attempt.name}`);
             
-          console.log(`Filtered to ${tradeActivities.length} trade activities`);
-          allTrades.push(...tradeActivities as SnapTradeTrade[]);
-          break; // Success, exit the loop
-        } else {
-          console.log(`❌ ${attempt.name} returned empty or invalid data:`, activitiesResponse.data);
+            // Filter for trade types if we got all activities
+            const tradeActivities = attempt.name.includes('All activities') 
+              ? activitiesResponse.data.filter((activity: any) => 
+                  ['BUY', 'SELL', 'OPTIONEXPIRATION', 'OPTIONASSIGNMENT', 'OPTIONEXERCISE'].includes(activity.type)
+                )
+              : activitiesResponse.data;
+              
+            console.log(`Filtered to ${tradeActivities.length} trade activities`);
+            allTrades.push(...tradeActivities as SnapTradeTrade[]);
+            
+            // Return true if we got the maximum (1000) trades, indicating more pages might exist
+            return activitiesResponse.data.length === 1000;
+          } else {
+            console.log(`❌ ${attempt.name} returned empty or invalid data:`, activitiesResponse.data);
+          }
+        } catch (attemptError) {
+          console.error(`❌ Error with ${attempt.name}:`, attemptError);
+          continue; // Try next approach
         }
-      } catch (attemptError) {
-        console.error(`❌ Error with ${attempt.name}:`, attemptError);
-        continue; // Try next approach
       }
+      
+      return false; // No successful request found
+    };
+
+    // Initial fetch
+    console.log('=== Starting paginated fetch ===');
+    let hasMorePages = await fetchTradesWithPagination();
+    let pageCount = 1;
+    
+    // Continue fetching if we hit the 1000 transaction limit
+    while (hasMorePages && pageCount < 10) { // Safety limit of 10 pages (10,000 transactions)
+      pageCount++;
+      
+      // Sort current trades to get the oldest date for next pagination
+      allTrades.sort((a, b) => 
+        new Date(b.trade_date || '').getTime() - new Date(a.trade_date || '').getTime()
+      );
+      
+      if (allTrades.length === 0) break;
+      
+      // Get the oldest trade date from current results
+      const oldestTrade = allTrades[allTrades.length - 1];
+      const oldestTradeDate = new Date(oldestTrade.trade_date || '');
+      
+      console.log(`=== Fetching page ${pageCount} (trades before ${oldestTradeDate.toISOString().split('T')[0]}) ===`);
+      
+      // Subtract 1 day to avoid getting the same last transaction
+      const nextEndDate = new Date(oldestTradeDate);
+      nextEndDate.setDate(nextEndDate.getDate() - 1);
+      
+      // Check if we've gone past our start date filter
+      if (startDate && nextEndDate < startDate) {
+        console.log('Reached start date limit, stopping pagination');
+        break;
+      }
+      
+      hasMorePages = await fetchTradesWithPagination(nextEndDate);
     }
+    
+    console.log(`=== Pagination complete: ${pageCount} pages, ${allTrades.length} total trades ===`);
 
     if (allTrades.length === 0) {
       console.warn('=== No activities found after all attempts ===');

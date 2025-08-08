@@ -1,6 +1,4 @@
-import { Snaptrade } from "snaptrade-typescript-sdk";
+// src/app/actions/snaptrade-client.ts
+// Re-export from new data source for backwards compatibility
 
-export const snaptrade = new Snaptrade({
-  clientId: process.env.SNAPTRADE_CLIENT_ID || '',
-  consumerKey: process.env.SNAPTRADE_SECRET || '',
-});
+export { snaptrade } from './data-sources/snaptrade/client';

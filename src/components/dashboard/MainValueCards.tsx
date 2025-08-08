@@ -2,9 +2,9 @@
 
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Progress } from '@/components/ui/progress';
-import { DollarSign, Wallet, TrendingUp, Shield, ArrowUpRight, ArrowDownRight } from 'lucide-react';
+import { DollarSign, Wallet, TrendingUp, Target, ArrowUpRight, ArrowDownRight } from 'lucide-react';
 
-export default function MainValueCards({ analyticsData, performanceData, riskData }: any) {
+export default function MainValueCards({ analyticsData, performanceData, riskData, realizedGainsData }: any) {
   return (
     <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
       {/* Total Portfolio Value */}
@@ -59,17 +59,22 @@ export default function MainValueCards({ analyticsData, performanceData, riskDat
         </CardContent>
       </Card>
 
-      {/* Risk Score */}
+      {/* All-Time Realized Gains */}
       <Card>
         <CardHeader className="flex justify-between pb-2">
-          <CardTitle className="text-sm">Risk Score</CardTitle>
-          <Shield className="h-4 w-4 text-muted-foreground" />
+          <CardTitle className="text-sm">All-Time Realized P/L</CardTitle>
+          <Target className="h-4 w-4 text-muted-foreground" />
         </CardHeader>
         <CardContent>
-          <div className="text-2xl font-bold">
-            {riskData?.riskSummary?.overallRiskScore || 'N/A'}/10
+          <div className={`text-2xl font-bold ${realizedGainsData?.totalRealizedPnL >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+            {realizedGainsData?.totalRealizedPnL >= 0 ? '+' : ''}
+            ${realizedGainsData?.totalRealizedPnL?.toLocaleString() || '0'}
           </div>
-          <Progress value={(riskData?.riskSummary?.overallRiskScore || 0) * 10} className="mt-2" />
+          {realizedGainsData?.winRate !== undefined && (
+            <p className="text-xs text-muted-foreground">
+              {realizedGainsData.winRate.toFixed(1)}% win rate ({realizedGainsData.closedTrades} trades)
+            </p>
+          )}
         </CardContent>
       </Card>
     </div>
