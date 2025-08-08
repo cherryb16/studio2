@@ -112,6 +112,34 @@ export async function getSnapTradeCredentials(firebaseUserId: string) {
   }
 }
 
+export async function getAllSnapTradeCredentials() {
+  try {
+    console.log('Querying Firestore for all users with SnapTrade credentials...');
+    const snapshot = await db.collection('snaptrade_users').get();
+    
+    const users: Array<{firebaseUserId: string, snaptradeUserId: string, userSecret: string}> = [];
+    
+    snapshot.forEach((doc: any) => {
+      const data = doc.data();
+      const userSecret = data?.snaptradeUserSecret;
+      
+      if (userSecret) {
+        users.push({
+          firebaseUserId: doc.id,
+          snaptradeUserId: doc.id, // Using Firebase UID as SnapTrade user ID
+          userSecret
+        });
+      }
+    });
+    
+    console.log(`Found ${users.length} users with SnapTrade credentials`);
+    return users;
+  } catch (error) {
+    console.error('Error getting all SnapTrade credentials:', error);
+    return [];
+  }
+}
+
 async function saveSnapTradeCredentials(firebaseUserId: string, credentials: UserIDandSecret) {
   try {
     const userRef = db.collection('snaptrade_users').doc(firebaseUserId);

@@ -1,12 +1,12 @@
 import { NextResponse } from 'next/server';
 import { headers } from 'next/headers';
-import { getSnapTradeCredentials } from '@/app/actions/firebase-admin';
+import { getAllSnapTradeCredentials, getSnapTradeCredentials } from '@/app/actions/data-sources/snaptrade/accounts';
 import { syncUserTrades } from '@/app/actions/data-sync/trades-sync';
 
 export async function POST(request: Request) {
   try {
     // Verify the request is from Vercel Cron
-    const headersList = headers();
+    const headersList = await headers();
     const authHeader = headersList.get('authorization');
 
     if (process.env.VERCEL_ENV === 'production' && authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
@@ -14,7 +14,7 @@ export async function POST(request: Request) {
     }
 
     // Get all users with SnapTrade credentials
-    const users = await getSnapTradeCredentials();
+    const users = await getAllSnapTradeCredentials();
     const results = [];
 
     // Sync trades for each user

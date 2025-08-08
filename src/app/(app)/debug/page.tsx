@@ -43,7 +43,7 @@ export default function DebugPage() {
       setTestResults({ type: 'risk', data: result });
     } catch (error) {
       console.error('Risk test error:', error);
-      setTestResults({ type: 'risk', error: error.message });
+      setTestResults({ type: 'risk', error: error instanceof Error ? error.message : String(error) });
     }
   };
 
@@ -62,7 +62,7 @@ export default function DebugPage() {
       setTestResults({ type: 'performance', data: result });
     } catch (error) {
       console.error('Performance test error:', error);
-      setTestResults({ type: 'performance', error: error.message });
+      setTestResults({ type: 'performance', error: error instanceof Error ? error.message : String(error) });
     }
   };
 
@@ -81,7 +81,7 @@ export default function DebugPage() {
       setTestResults({ type: 'connection', data: result });
     } catch (error) {
       console.error('Connection test error:', error);
-      setTestResults({ type: 'connection', error: error.message });
+      setTestResults({ type: 'connection', error: error instanceof Error ? error.message : String(error) });
     }
   };
 
@@ -102,7 +102,7 @@ export default function DebugPage() {
       setTestResults({ type: 'enhanced-performance', data: result });
     } catch (error) {
       console.error('Enhanced performance test error:', error);
-      setTestResults({ type: 'enhanced-performance', error: error.message });
+      setTestResults({ type: 'enhanced-performance', error: error instanceof Error ? error.message : String(error) });
     }
   };
 

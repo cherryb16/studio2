@@ -221,8 +221,11 @@ const DashboardPage = () => {
                     <PerformanceAttribution performanceAttribution={riskData.performanceAttribution} />
                   )}
                   {/* Pass performanceData to the chart */}
-                  {performanceData && (
-                    <PerformanceChart performanceData={performanceData} />
+                  {performanceData && !('error' in performanceData) && (
+                    <PerformanceChart performanceData={{
+                      historicalData: performanceData.historicalData,
+                      totalValue: performanceData.totalValue
+                    }} />
                   )}
                 </PaywallWrapper>
               </>

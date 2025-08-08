@@ -5,7 +5,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useAuth } from '@/hooks/use-auth';
 import { useCachedAccounts } from '@/hooks/use-cached-accounts';
 import { RefreshCw } from 'lucide-react';
-import { useToast } from '@/components/ui/use-toast';
+import { useToast } from '@/hooks/use-toast';
 import { triggerManualSync } from '@/app/actions/data-sync/manual-sync';
 import { 
   getEnhancedTrades, 
