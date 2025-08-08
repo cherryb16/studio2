@@ -22,6 +22,10 @@ const mainNav = [
     title: 'Positions',
   },
   {
+    href: '/advanced-analytics',
+    title: 'Account Activities',
+  },
+  {
     href: '/pricing',
     title: 'Pricing',
   },

@@ -1,12 +1,12 @@
 'use client';
 
 import { useState } from 'react';
+import * as React from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useAuth } from '@/hooks/use-auth';
 import { PaywallWrapper } from '@/components/paywall-wrapper';
 import { 
-  getAnalyticsActivities, 
-  getAnalyticsSummaryStats,
+  getAnalyticsActivities,
   type AnalyticsActivity 
 } from '@/app/actions/snaptrade-trades-enhanced';
 import {
@@ -16,7 +16,6 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -47,19 +46,16 @@ import {
   PieChart,
   BarChart3,
   Calendar,
-  Target
+  Target,
+  Zap
 } from 'lucide-react';
 import { format } from 'date-fns';
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart as RechartsPieChart, Cell, Pie } from 'recharts';
 
-const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884D8', '#82CA9D'];
-
-function AdvancedAnalyticsContent() {
+function AccountActivitiesContent() {
   const { user } = useAuth();
   const [selectedPeriod, setSelectedPeriod] = useState<'day' | 'week' | 'month' | 'year' | 'all'>('month');
-  const [activeTab, setActiveTab] = useState('overview');
-
-  // Get SnapTrade credentials
+  const [selectedAccount, setSelectedAccount] = useState<string>('all');
+  const [selectedActivityType, setSelectedActivityType] = useState<string>('all');
   const { data: credentials } = useQuery({
     queryKey: ['snaptradeCredentials', user?.uid],
     queryFn: async () => {
@@ -71,27 +67,143 @@ function AdvancedAnalyticsContent() {
     enabled: !!user?.uid,
   });
 
-  // Fetch analytics activities
-  const { data: activities, isLoading: activitiesLoading } = useQuery({
-    queryKey: ['analyticsActivities', credentials?.snaptradeUserId, credentials?.userSecret, selectedPeriod],
-    queryFn: () => getAnalyticsActivities(
-      credentials!.snaptradeUserId,
-      credentials!.userSecret,
-      selectedPeriod === 'all' ? undefined : getStartDate(selectedPeriod)
-    ),
+  // Fetch accounts for filtering
+  const { data: accounts, isLoading: accountsLoading, error: accountsError } = useQuery({
+    queryKey: ['accounts', credentials?.snaptradeUserId, credentials?.userSecret],
+    queryFn: async () => {
+      console.log('Fetching accounts with credentials:', {
+        snaptradeUserId: credentials!.snaptradeUserId,
+        userSecret: credentials!.userSecret ? 'present' : 'missing'
+      });
+      const res = await fetch(`/api/snaptrade/accounts?snaptradeUserId=${credentials!.snaptradeUserId}&userSecret=${credentials!.userSecret}`);
+      console.log('Accounts API response status:', res.status);
+      if (!res.ok) {
+        const errorData = await res.text();
+        console.error('Accounts API error:', errorData);
+        throw new Error(`Failed to fetch accounts: ${res.status}`);
+      }
+      const accountsData = await res.json();
+      console.log('Accounts API data:', accountsData);
+      return accountsData;
+    },
     enabled: !!credentials?.snaptradeUserId && !!credentials?.userSecret,
   });
 
-  // Fetch analytics statistics
-  const { data: stats } = useQuery({
-    queryKey: ['analyticsStats', credentials?.snaptradeUserId, credentials?.userSecret, selectedPeriod],
-    queryFn: () => getAnalyticsSummaryStats(
-      credentials!.snaptradeUserId,
-      credentials!.userSecret,
-      selectedPeriod
-    ),
+  // Fetch account activities
+  const { data: activities, isLoading: activitiesLoading, error: activitiesError } = useQuery({
+    queryKey: ['accountActivities', credentials?.snaptradeUserId, credentials?.userSecret, selectedPeriod, selectedAccount],
+    queryFn: async () => {
+      console.log('Fetching account activities with params:', {
+        snaptradeUserId: credentials!.snaptradeUserId,
+        userSecret: credentials!.userSecret ? 'present' : 'missing',
+        startDate: selectedPeriod === 'all' ? 'undefined' : getStartDate(selectedPeriod)
+      });
+      const result = await getAnalyticsActivities(
+        credentials!.snaptradeUserId,
+        credentials!.userSecret,
+        selectedPeriod === 'all' ? undefined : getStartDate(selectedPeriod),
+        undefined, // endDate
+        selectedAccount === 'all' ? undefined : selectedAccount
+      );
+      console.log('Account activities result:', result);
+      return result;
+    },
     enabled: !!credentials?.snaptradeUserId && !!credentials?.userSecret,
   });
+
+  // Calculate filtered stats from the activities with memoization
+  // This must be called at the top level, not inside any conditional logic
+  const { activitiesArray, filteredStats } = React.useMemo(() => {
+    // Filter activities based on account and activity type
+    const filterActivities = (activities: any[]) => {
+      if (!Array.isArray(activities)) return [];
+
+      let filtered = activities;
+
+      // Filter by account
+      if (selectedAccount !== 'all') {
+        filtered = filtered.filter(activity => activity.accountId === selectedAccount);
+      }
+
+      // Filter by activity type
+      if (selectedActivityType !== 'all') {
+        filtered = filtered.filter(activity => activity.type === selectedActivityType);
+      }
+
+      return filtered;
+    };
+
+    const filteredActivities = filterActivities(Array.isArray(activities) ? activities : []);
+    
+    if (!filteredActivities.length) {
+      return { activitiesArray: filteredActivities, filteredStats: null };
+    }
+    
+    const stats = {
+      totalDividends: 0,
+      totalContributions: 0,
+      totalWithdrawals: 0,
+      totalInterest: 0,
+      totalFees: 0,
+      totalREI: 0,
+      totalStockDividends: 0,
+      totalTransfers: 0,
+      dividendActivities: 0,
+      contributionActivities: 0,
+      withdrawalActivities: 0,
+      interestActivities: 0,
+      feeActivities: 0,
+      reiActivities: 0,
+      stockDividendActivities: 0,
+      transferActivities: 0,
+      totalActivities: filteredActivities.length,
+      netCashFlow: 0,
+    };
+
+    filteredActivities.forEach(activity => {
+      switch (activity.type) {
+        case 'DIVIDEND':
+          stats.totalDividends += activity.amount;
+          stats.dividendActivities++;
+          stats.netCashFlow += activity.amount;
+          break;
+        case 'CONTRIBUTION':
+          stats.totalContributions += activity.amount;
+          stats.contributionActivities++;
+          stats.netCashFlow += activity.amount;
+          break;
+        case 'WITHDRAWAL':
+          stats.totalWithdrawals += activity.amount;
+          stats.withdrawalActivities++;
+          stats.netCashFlow -= activity.amount;
+          break;
+        case 'INTEREST':
+          stats.totalInterest += activity.amount;
+          stats.interestActivities++;
+          stats.netCashFlow += activity.amount;
+          break;
+        case 'FEE':
+          stats.totalFees += activity.amount;
+          stats.feeActivities++;
+          stats.netCashFlow -= activity.amount;
+          break;
+        case 'REI':
+          stats.totalREI += activity.amount;
+          stats.reiActivities++;
+          break;
+        case 'STOCK_DIVIDEND':
+          stats.totalStockDividends += activity.amount;
+          stats.stockDividendActivities++;
+          break;
+        case 'TRANSFER':
+          stats.totalTransfers += activity.amount;
+          stats.transferActivities++;
+          break;
+      }
+    });
+
+    return { activitiesArray: filteredActivities, filteredStats: stats };
+  }, [activities, selectedAccount, selectedActivityType]);
 
   const getStartDate = (period: 'day' | 'week' | 'month' | 'year'): Date => {
     const date = new Date();
@@ -121,6 +233,11 @@ function AdvancedAnalyticsContent() {
 
   const getActivityIcon = (type: string) => {
     switch (type) {
+      case 'BUY': return <TrendingUp className="h-4 w-4" />;
+      case 'SELL': return <TrendingDown className="h-4 w-4" />;
+      case 'OPTIONEXPIRATION': return <Calendar className="h-4 w-4" />;
+      case 'OPTIONASSIGNMENT': return <Target className="h-4 w-4" />;
+      case 'OPTIONEXERCISE': return <Zap className="h-4 w-4" />;
       case 'DIVIDEND': return <Gift className="h-4 w-4" />;
       case 'CONTRIBUTION': return <ArrowUpRight className="h-4 w-4" />;
       case 'WITHDRAWAL': return <ArrowDownLeft className="h-4 w-4" />;
@@ -135,7 +252,12 @@ function AdvancedAnalyticsContent() {
 
   const getActivityBadgeColor = (type: string) => {
     switch (type) {
-      case 'DIVIDEND': return 'bg-green-100 text-green-800 border-green-200';
+      case 'BUY': return 'bg-green-100 text-green-800 border-green-200';
+      case 'SELL': return 'bg-red-100 text-red-800 border-red-200';
+      case 'OPTIONEXPIRATION': return 'bg-gray-100 text-gray-800 border-gray-200';
+      case 'OPTIONASSIGNMENT': return 'bg-orange-100 text-orange-800 border-orange-200';
+      case 'OPTIONEXERCISE': return 'bg-purple-100 text-purple-800 border-purple-200';
+      case 'DIVIDEND': return 'bg-emerald-100 text-emerald-800 border-emerald-200';
       case 'CONTRIBUTION': return 'bg-blue-100 text-blue-800 border-blue-200';
       case 'WITHDRAWAL': return 'bg-red-100 text-red-800 border-red-200';
       case 'INTEREST': return 'bg-yellow-100 text-yellow-800 border-yellow-200';
@@ -147,59 +269,6 @@ function AdvancedAnalyticsContent() {
     }
   };
 
-  // Prepare chart data
-  const prepareChartData = () => {
-    if (!activities || !Array.isArray(activities)) return [];
-    
-    const monthlyData = activities.reduce((acc: any, activity) => {
-      const month = format(activity.executedAt, 'MMM yyyy');
-      if (!acc[month]) {
-        acc[month] = {
-          month,
-          dividends: 0,
-          contributions: 0,
-          withdrawals: 0,
-          interest: 0,
-          fees: 0,
-        };
-      }
-      
-      switch (activity.type) {
-        case 'DIVIDEND':
-          acc[month].dividends += activity.amount;
-          break;
-        case 'CONTRIBUTION':
-          acc[month].contributions += activity.amount;
-          break;
-        case 'WITHDRAWAL':
-          acc[month].withdrawals += activity.amount;
-          break;
-        case 'INTEREST':
-          acc[month].interest += activity.amount;
-          break;
-        case 'FEE':
-          acc[month].fees += activity.amount;
-          break;
-      }
-      
-      return acc;
-    }, {});
-    
-    return Object.values(monthlyData).slice(-12); // Last 12 months
-  };
-
-  // Prepare pie chart data for activity types
-  const preparePieData = () => {
-    if (!stats || 'error' in stats) return [];
-    
-    return [
-      { name: 'Dividends', value: stats.totalDividends, count: stats.dividendActivities },
-      { name: 'Contributions', value: stats.totalContributions, count: stats.contributionActivities },
-      { name: 'Withdrawals', value: stats.totalWithdrawals, count: stats.withdrawalActivities },
-      { name: 'Interest', value: stats.totalInterest, count: stats.interestActivities },
-      { name: 'Fees', value: stats.totalFees, count: stats.feeActivities },
-    ].filter(item => item.value > 0);
-  };
 
   if (!user || !credentials) {
     return (
@@ -219,394 +288,387 @@ function AdvancedAnalyticsContent() {
     );
   }
 
-  const activitiesArray = Array.isArray(activities) ? activities : [];
   const hasError = activities && 'error' in activities;
-  const chartData = prepareChartData();
-  const pieData = preparePieData();
+  
+  // Debug logging
+  console.log('Activities data:', activities);
+  console.log('Activities error:', activitiesError);
+  console.log('Has error:', hasError);
+  console.log('Activities array length:', activitiesArray.length);
+  console.log('Filtered stats:', filteredStats);
+  console.log('Accounts data:', accounts);
+  console.log('Accounts loading:', accountsLoading);
+  console.log('Accounts error:', accountsError);
+  console.log('Accounts is array:', Array.isArray(accounts));
+  console.log('Accounts length:', accounts && Array.isArray(accounts) ? accounts.length : 'not array');
 
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-3xl font-bold">Advanced Analytics</h1>
+        <h1 className="text-3xl font-bold">Account Activities</h1>
         <p className="text-muted-foreground">
-          Comprehensive view of dividends, contributions, withdrawals, and other account activity
+          Track dividends, contributions, withdrawals, and other non-trading account activities
         </p>
       </div>
 
-      {/* Enhanced Summary Stats */}
-      {stats && !('error' in stats) && (
+      {/* Enhanced Summary Stats - Filtered */}
+      {filteredStats && (
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Total Dividends</CardTitle>
-              <Gift className="h-4 w-4 text-muted-foreground" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold text-green-600">
-                {formatCurrency(stats.totalDividends)}
-              </div>
-              <p className="text-xs text-muted-foreground">
-                {stats.dividendActivities} payments
-              </p>
-            </CardContent>
-          </Card>
+          {/* Show all cards when no specific activity type is selected */}
+          {selectedActivityType === 'all' ? (
+            <>
+              <Card>
+                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                  <CardTitle className="text-sm font-medium">Total Dividends</CardTitle>
+                  <Gift className="h-4 w-4 text-muted-foreground" />
+                </CardHeader>
+                <CardContent>
+                  <div className="text-2xl font-bold text-green-600">
+                    {formatCurrency(filteredStats.totalDividends)}
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    {filteredStats.dividendActivities} payments
+                  </p>
+                </CardContent>
+              </Card>
 
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Net Contributions</CardTitle>
-              <Wallet className="h-4 w-4 text-muted-foreground" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">
-                {formatCurrency(stats.totalContributions - stats.totalWithdrawals)}
-              </div>
-              <p className="text-xs text-muted-foreground">
-                {stats.contributionActivities} in, {stats.withdrawalActivities} out
-              </p>
-            </CardContent>
-          </Card>
+              <Card>
+                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                  <CardTitle className="text-sm font-medium">Net Contributions</CardTitle>
+                  <Wallet className="h-4 w-4 text-muted-foreground" />
+                </CardHeader>
+                <CardContent>
+                  <div className="text-2xl font-bold">
+                    {formatCurrency(filteredStats.totalContributions - filteredStats.totalWithdrawals)}
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    {filteredStats.contributionActivities} in, {filteredStats.withdrawalActivities} out
+                  </p>
+                </CardContent>
+              </Card>
 
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Interest Earned</CardTitle>
-              <Percent className="h-4 w-4 text-muted-foreground" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold text-blue-600">
-                {formatCurrency(stats.totalInterest)}
-              </div>
-              <p className="text-xs text-muted-foreground">
-                {stats.interestActivities} payments
-              </p>
-            </CardContent>
-          </Card>
+              <Card>
+                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                  <CardTitle className="text-sm font-medium">Interest Earned</CardTitle>
+                  <Percent className="h-4 w-4 text-muted-foreground" />
+                </CardHeader>
+                <CardContent>
+                  <div className="text-2xl font-bold text-blue-600">
+                    {formatCurrency(filteredStats.totalInterest)}
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    {filteredStats.interestActivities} payments
+                  </p>
+                </CardContent>
+              </Card>
 
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Total Fees</CardTitle>
-              <Receipt className="h-4 w-4 text-muted-foreground" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold text-red-600">
-                {formatCurrency(stats.totalFees)}
-              </div>
-              <p className="text-xs text-muted-foreground">
-                {stats.feeActivities} charges
-              </p>
-            </CardContent>
-          </Card>
+              <Card>
+                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                  <CardTitle className="text-sm font-medium">Net Cash Flow</CardTitle>
+                  <TrendingUp className="h-4 w-4 text-muted-foreground" />
+                </CardHeader>
+                <CardContent>
+                  <div className={`text-2xl font-bold ${filteredStats.netCashFlow >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                    {formatCurrency(filteredStats.netCashFlow)}
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    {filteredStats.totalActivities} activities
+                  </p>
+                </CardContent>
+              </Card>
+            </>
+          ) : (
+            /* Show focused cards when specific activity type is selected */
+            <>
+              <Card>
+                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                  <CardTitle className="text-sm font-medium">
+                    {selectedActivityType === 'DIVIDEND' && 'Dividend Total'}
+                    {selectedActivityType === 'CONTRIBUTION' && 'Contribution Total'}
+                    {selectedActivityType === 'WITHDRAWAL' && 'Withdrawal Total'}
+                    {selectedActivityType === 'INTEREST' && 'Interest Total'}
+                    {selectedActivityType === 'FEE' && 'Fee Total'}
+                    {selectedActivityType === 'TRANSFER' && 'Transfer Total'}
+                    {selectedActivityType === 'REI' && 'Reinvestment Total'}
+                    {selectedActivityType === 'STOCK_DIVIDEND' && 'Stock Dividend Total'}
+                  </CardTitle>
+                  {getActivityIcon(selectedActivityType)}
+                </CardHeader>
+                <CardContent>
+                  <div className={`text-2xl font-bold ${
+                    ['CONTRIBUTION', 'DIVIDEND', 'INTEREST', 'REI', 'STOCK_DIVIDEND'].includes(selectedActivityType)
+                      ? 'text-green-600'
+                      : ['WITHDRAWAL', 'FEE'].includes(selectedActivityType)
+                      ? 'text-red-600'
+                      : ''
+                  }`}>
+                    {selectedActivityType === 'DIVIDEND' && formatCurrency(filteredStats.totalDividends)}
+                    {selectedActivityType === 'CONTRIBUTION' && formatCurrency(filteredStats.totalContributions)}
+                    {selectedActivityType === 'WITHDRAWAL' && formatCurrency(filteredStats.totalWithdrawals)}
+                    {selectedActivityType === 'INTEREST' && formatCurrency(filteredStats.totalInterest)}
+                    {selectedActivityType === 'FEE' && formatCurrency(filteredStats.totalFees)}
+                    {selectedActivityType === 'TRANSFER' && formatCurrency(filteredStats.totalTransfers)}
+                    {selectedActivityType === 'REI' && formatCurrency(filteredStats.totalREI)}
+                    {selectedActivityType === 'STOCK_DIVIDEND' && formatCurrency(filteredStats.totalStockDividends)}
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    {filteredStats.totalActivities} activities
+                  </p>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                  <CardTitle className="text-sm font-medium">Time Period</CardTitle>
+                  <Calendar className="h-4 w-4 text-muted-foreground" />
+                </CardHeader>
+                <CardContent>
+                  <div className="text-2xl font-bold">
+                    {selectedPeriod.charAt(0).toUpperCase() + selectedPeriod.slice(1)}
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    {selectedAccount === 'all' ? 'All accounts' : 'Single account'}
+                  </p>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                  <CardTitle className="text-sm font-medium">Average Amount</CardTitle>
+                  <BarChart3 className="h-4 w-4 text-muted-foreground" />
+                </CardHeader>
+                <CardContent>
+                  <div className="text-2xl font-bold">
+                    {filteredStats.totalActivities > 0 && (
+                      formatCurrency(
+                        (selectedActivityType === 'DIVIDEND' && filteredStats.totalDividends / filteredStats.dividendActivities) ||
+                        (selectedActivityType === 'CONTRIBUTION' && filteredStats.totalContributions / filteredStats.contributionActivities) ||
+                        (selectedActivityType === 'WITHDRAWAL' && filteredStats.totalWithdrawals / filteredStats.withdrawalActivities) ||
+                        (selectedActivityType === 'INTEREST' && filteredStats.totalInterest / filteredStats.interestActivities) ||
+                        (selectedActivityType === 'FEE' && filteredStats.totalFees / filteredStats.feeActivities) ||
+                        (selectedActivityType === 'TRANSFER' && filteredStats.totalTransfers / filteredStats.transferActivities) ||
+                        (selectedActivityType === 'REI' && filteredStats.totalREI / filteredStats.reiActivities) ||
+                        (selectedActivityType === 'STOCK_DIVIDEND' && filteredStats.totalStockDividends / filteredStats.stockDividendActivities) ||
+                        0
+                      )
+                    )}
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Per transaction
+                  </p>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                  <CardTitle className="text-sm font-medium">Activity Count</CardTitle>
+                  <PieChart className="h-4 w-4 text-muted-foreground" />
+                </CardHeader>
+                <CardContent>
+                  <div className="text-2xl font-bold">
+                    {filteredStats.totalActivities}
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    {selectedActivityType.toLowerCase()} transactions
+                  </p>
+                </CardContent>
+              </Card>
+            </>
+          )}
         </div>
       )}
 
-      {/* Combined Period Selector and Tabs */}
-      <div className="flex flex-wrap gap-4 justify-between items-end">
-        <div className="flex gap-2">
-          {(['day', 'week', 'month', 'year', 'all'] as const).map((period) => (
-            <Button
-              key={period}
-              variant={selectedPeriod === period ? 'default' : 'outline'}
-              size="sm"
-              onClick={() => setSelectedPeriod(period)}
-            >
-              {period.charAt(0).toUpperCase() + period.slice(1)}
-            </Button>
-          ))}
+      {/* Show message when no activities match filters */}
+      {!filteredStats && !activitiesLoading && !hasError && (
+        <Card>
+          <CardContent className="flex items-center justify-center py-8">
+            <p className="text-muted-foreground">No activities match the selected filters</p>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Filtering Controls */}
+      <div className="flex flex-wrap gap-4 items-center justify-between">
+        <div className="flex flex-wrap gap-3">
+          {/* Period Filter */}
+          <div className="flex gap-2">
+            {(['day', 'week', 'month', 'year', 'all'] as const).map((period) => (
+              <Button
+                key={period}
+                variant={selectedPeriod === period ? 'default' : 'outline'}
+                size="sm"
+                onClick={() => setSelectedPeriod(period)}
+              >
+                {period.charAt(0).toUpperCase() + period.slice(1)}
+              </Button>
+            ))}
+          </div>
+          
+          {/* Account Filter */}
+          <select
+            value={selectedAccount}
+            onChange={(e) => setSelectedAccount(e.target.value)}
+            className="border rounded px-3 py-1 text-sm"
+            title="Filter by account"
+            aria-label="Filter by account"
+            disabled={accountsLoading}
+          >
+            <option value="all">
+              {accountsLoading ? 'Loading accounts...' : 'All Accounts'}
+            </option>
+            {accountsError && (
+              <option value="all" disabled>
+                Error loading accounts
+              </option>
+            )}
+            {accounts && Array.isArray(accounts) && accounts.map((account: any) => (
+              <option key={account.id} value={account.id}>
+                {account.name || account.number || account.id}
+              </option>
+            ))}
+            {!accountsLoading && !accountsError && (!accounts || !Array.isArray(accounts) || accounts.length === 0) && (
+              <option value="all" disabled>
+                No accounts found
+              </option>
+            )}
+          </select>
+          
+          {/* Activity Type Filter */}
+          <select
+            value={selectedActivityType}
+            onChange={(e) => setSelectedActivityType(e.target.value)}
+            className="border rounded px-3 py-1 text-sm"
+            title="Filter by activity type"
+            aria-label="Filter by activity type"
+          >
+            <option value="all">All Types</option>
+            <option value="DIVIDEND">Dividends</option>
+            <option value="CONTRIBUTION">Contributions</option>
+            <option value="WITHDRAWAL">Withdrawals</option>
+            <option value="INTEREST">Interest</option>
+            <option value="FEE">Fees</option>
+            <option value="TRANSFER">Transfers</option>
+            <option value="REI">Dividend Reinvestment</option>
+            <option value="STOCK_DIVIDEND">Stock Dividends</option>
+          </select>
         </div>
-        <Tabs value={activeTab} onValueChange={setActiveTab}>
-          <TabsList className="flex gap-2">
-            <TabsTrigger value="overview">Overview</TabsTrigger>
-            <TabsTrigger value="dividends">Dividends</TabsTrigger>
-            <TabsTrigger value="cashflow">Cash Flow</TabsTrigger>
-            <TabsTrigger value="activity">All Activity</TabsTrigger>
-          </TabsList>
-        </Tabs>
+        
+        <div className="text-sm text-muted-foreground">
+          {activitiesArray.length} activities
+        </div>
       </div>
 
-      {/* Tabs for different views */}
-      <Tabs value={activeTab} onValueChange={setActiveTab}>
-
-        {/* Overview Tab */}
-        <TabsContent value="overview" className="space-y-6">
-          <div className="grid gap-6 md:grid-cols-2">
-            {/* Activity Trends Chart */}
-            <Card>
-              <CardHeader>
-                <CardTitle>Activity Trends</CardTitle>
-                <CardDescription>Monthly breakdown of account activity</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="h-[300px]">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <LineChart data={chartData}>
-                      <CartesianGrid strokeDasharray="3 3" />
-                      <XAxis dataKey="month" />
-                      <YAxis />
-                      <Tooltip formatter={(value) => formatCurrency(value as number)} />
-                      <Line type="monotone" dataKey="dividends" stroke="#10B981" strokeWidth={2} />
-                      <Line type="monotone" dataKey="contributions" stroke="#3B82F6" strokeWidth={2} />
-                      <Line type="monotone" dataKey="interest" stroke="#F59E0B" strokeWidth={2} />
-                    </LineChart>
-                  </ResponsiveContainer>
-                </div>
-              </CardContent>
-            </Card>
-
-            {/* Activity Distribution */}
-            <Card>
-              <CardHeader>
-                <CardTitle>Activity Distribution</CardTitle>
-                <CardDescription>Breakdown by activity type</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="h-[300px]">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <RechartsPieChart>
-                      <Pie
-                        data={pieData}
-                        cx="50%"
-                        cy="50%"
-                        labelLine={false}
-                        label={({ name, percent }: { name: string; percent: number }) => `${name} ${(percent * 100).toFixed(0)}%`}
-                        outerRadius={80}
-                        fill="#8884d8"
-                        dataKey="value"
-                      >
-                        {pieData.map((entry, index) => (
-                          <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                        ))}
-                      </Pie>
-                      <Tooltip formatter={(value) => formatCurrency(value as number)} />
-                    </RechartsPieChart>
-                  </ResponsiveContainer>
-                </div>
-              </CardContent>
-            </Card>
-          </div>
-        </TabsContent>
-
-        {/* Dividends Tab */}
-        <TabsContent value="dividends" className="space-y-6">
-          {stats && !('error' in stats) && stats.topDividendPayers.size > 0 && (
-            <Card>
-              <CardHeader>
-                <CardTitle>Top Dividend Payers</CardTitle>
-                <CardDescription>Companies providing the most dividend income</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-4">
-                  {Array.from(stats.topDividendPayers.entries())
-                    .sort(([,a], [,b]) => b - a)
-                    .slice(0, 10)
-                    .map(([symbol, amount], index) => (
-                      <div key={symbol} className="flex items-center justify-between">
-                        <div className="flex items-center gap-3">
-                          <div className="font-medium">{symbol}</div>
-                          <Badge variant="outline">#{index + 1}</Badge>
-                        </div>
-                        <div className="text-right">
-                          <div className="font-medium text-green-600">{formatCurrency(amount)}</div>
+      {/* Activity List */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Non-Trading Account Activity</CardTitle>
+          <CardDescription>
+            Complete history of dividends, contributions, withdrawals, and other non-trading activities
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {activitiesLoading ? (
+            <div className="flex items-center justify-center py-8">
+              <Loader2 className="h-8 w-8 animate-spin" />
+            </div>
+          ) : hasError ? (
+            <p className="text-center text-muted-foreground py-8">
+              Error loading activities. Please try again.
+            </p>
+          ) : activitiesArray.length === 0 ? (
+            <p className="text-center text-muted-foreground py-8">
+              No activities found for the selected filters.
+            </p>
+          ) : (
+            <ScrollArea className="h-[600px]">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Date</TableHead>
+                    <TableHead>Type</TableHead>
+                    <TableHead>Description</TableHead>
+                    <TableHead>Symbol</TableHead>
+                    <TableHead className="text-right">Amount</TableHead>
+                    <TableHead>Account</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {activitiesArray.map((activity) => (
+                    <TableRow key={activity.id}>
+                      <TableCell>
+                        <div>
+                          <div className="font-medium">
+                            {format(activity.executedAt, 'MMM dd, yyyy')}
+                          </div>
                           <div className="text-xs text-muted-foreground">
-                            {stats.totalDividends > 0 && ((amount / stats.totalDividends) * 100).toFixed(1)}%
+                            {format(activity.executedAt, 'HH:mm:ss')}
                           </div>
                         </div>
-                      </div>
-                    ))}
-                </div>
-              </CardContent>
-            </Card>
-          )}
-        </TabsContent>
-
-        {/* Cash Flow Tab */}
-        <TabsContent value="cashflow" className="space-y-6">
-          <div className="grid gap-6 md:grid-cols-2">
-            <Card>
-              <CardHeader>
-                <CardTitle>Cash Inflows</CardTitle>
-                <CardDescription>Money coming into your account</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                {stats && !('error' in stats) && (
-                  <>
-                    <div className="flex justify-between items-center">
-                      <span>Contributions</span>
-                      <span className="font-medium text-blue-600">{formatCurrency(stats.totalContributions)}</span>
-                    </div>
-                    <div className="flex justify-between items-center">
-                      <span>Dividends</span>
-                      <span className="font-medium text-green-600">{formatCurrency(stats.totalDividends)}</span>
-                    </div>
-                    <div className="flex justify-between items-center">
-                      <span>Interest</span>
-                      <span className="font-medium text-yellow-600">{formatCurrency(stats.totalInterest)}</span>
-                    </div>
-                    <hr />
-                    <div className="flex justify-between items-center font-bold">
-                      <span>Total Inflows</span>
-                      <span className="text-green-600">
-                        {formatCurrency(stats.totalContributions + stats.totalDividends + stats.totalInterest)}
-                      </span>
-                    </div>
-                  </>
-                )}
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader>
-                <CardTitle>Cash Outflows</CardTitle>
-                <CardDescription>Money leaving your account</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                {stats && !('error' in stats) && (
-                  <>
-                    <div className="flex justify-between items-center">
-                      <span>Withdrawals</span>
-                      <span className="font-medium text-red-600">{formatCurrency(stats.totalWithdrawals)}</span>
-                    </div>
-                    <div className="flex justify-between items-center">
-                      <span>Fees</span>
-                      <span className="font-medium text-orange-600">{formatCurrency(stats.totalFees)}</span>
-                    </div>
-                    <hr />
-                    <div className="flex justify-between items-center font-bold">
-                      <span>Total Outflows</span>
-                      <span className="text-red-600">
-                        {formatCurrency(stats.totalWithdrawals + stats.totalFees)}
-                      </span>
-                    </div>
-                    <hr />
-                    <div className="flex justify-between items-center font-bold text-lg">
-                      <span>Net Cash Flow</span>
-                      <span className={
-                        (stats.totalContributions + stats.totalDividends + stats.totalInterest - stats.totalWithdrawals - stats.totalFees) >= 0 
-                          ? 'text-green-600' 
-                          : 'text-red-600'
-                      }>
-                        {formatCurrency(
-                          stats.totalContributions + stats.totalDividends + stats.totalInterest - stats.totalWithdrawals - stats.totalFees
+                      </TableCell>
+                      
+                      <TableCell>
+                        <Badge 
+                          className={getActivityBadgeColor(activity.type)}
+                          variant="outline"
+                        >
+                          <div className="flex items-center gap-1">
+                            {getActivityIcon(activity.type)}
+                            {activity.type}
+                          </div>
+                        </Badge>
+                      </TableCell>
+                      
+                      <TableCell>
+                        <div className="max-w-[250px] truncate" title={activity.description}>
+                          {activity.description}
+                        </div>
+                      </TableCell>
+                      
+                      <TableCell>
+                        {activity.symbol ? (
+                          <Badge variant="outline">{activity.symbol}</Badge>
+                        ) : (
+                          <span className="text-muted-foreground">-</span>
                         )}
-                      </span>
-                    </div>
-                  </>
-                )}
-              </CardContent>
-            </Card>
-          </div>
-        </TabsContent>
-
-        {/* All Activity Tab */}
-        <TabsContent value="activity">
-          <Card>
-            <CardHeader>
-              <CardTitle>All Account Activity</CardTitle>
-              <CardDescription>
-                Complete history of non-trading account activity
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              {activitiesLoading ? (
-                <div className="flex items-center justify-center py-8">
-                  <Loader2 className="h-8 w-8 animate-spin" />
-                </div>
-              ) : hasError ? (
-                <p className="text-center text-muted-foreground py-8">
-                  Error loading activities. Please try again.
-                </p>
-              ) : activitiesArray.length === 0 ? (
-                <p className="text-center text-muted-foreground py-8">
-                  No activities found for the selected period.
-                </p>
-              ) : (
-                <ScrollArea className="h-[600px]">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Date</TableHead>
-                        <TableHead>Type</TableHead>
-                        <TableHead>Description</TableHead>
-                        <TableHead>Symbol</TableHead>
-                        <TableHead className="text-right">Amount</TableHead>
-                        <TableHead>Currency</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {activitiesArray.map((activity) => (
-                        <TableRow key={activity.id}>
-                          <TableCell>
-                            <div>
-                              <div className="font-medium">
-                                {format(activity.executedAt, 'MMM dd, yyyy')}
-                              </div>
-                              <div className="text-xs text-muted-foreground">
-                                {format(activity.executedAt, 'HH:mm:ss')}
-                              </div>
-                            </div>
-                          </TableCell>
-                          
-                          <TableCell>
-                            <Badge 
-                              className={getActivityBadgeColor(activity.type)}
-                              variant="outline"
-                            >
-                              <div className="flex items-center gap-1">
-                                {getActivityIcon(activity.type)}
-                                {activity.type}
-                              </div>
-                            </Badge>
-                          </TableCell>
-                          
-                          <TableCell>
-                            <div className="max-w-[200px] truncate" title={activity.description}>
-                              {activity.description}
-                            </div>
-                          </TableCell>
-                          
-                          <TableCell>
-                            {activity.symbol ? (
-                              <Badge variant="outline">{activity.symbol}</Badge>
-                            ) : (
-                              <span className="text-muted-foreground">-</span>
-                            )}
-                          </TableCell>
-                          
-                          <TableCell className="text-right">
-                            <span className={
-                              ['CONTRIBUTION', 'DIVIDEND', 'INTEREST', 'REI', 'STOCK_DIVIDEND'].includes(activity.type)
-                                ? 'text-green-600'
-                                : ['WITHDRAWAL', 'FEE'].includes(activity.type)
-                                ? 'text-red-600'
-                                : ''
-                            }>
-                              {formatCurrency(activity.amount, activity.currency)}
-                            </span>
-                          </TableCell>
-                          
-                          <TableCell>
-                            <Badge variant="outline">{activity.currency}</Badge>
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </ScrollArea>
-              )}
-            </CardContent>
-          </Card>
-        </TabsContent>
-      </Tabs>
+                      </TableCell>
+                      
+                      <TableCell className="text-right">
+                        <span className={
+                          ['CONTRIBUTION', 'DIVIDEND', 'INTEREST', 'REI', 'STOCK_DIVIDEND'].includes(activity.type)
+                            ? 'text-green-600 font-medium'
+                            : ['WITHDRAWAL', 'FEE'].includes(activity.type)
+                            ? 'text-red-600 font-medium'
+                            : 'font-medium'
+                        }>
+                          {formatCurrency(activity.amount, activity.currency)}
+                        </span>
+                      </TableCell>
+                      
+                      <TableCell>
+                        <span className="text-sm text-muted-foreground">
+                          {accounts && Array.isArray(accounts) && accounts.find((acc: any) => acc.id === activity.accountId)?.name || activity.accountId}
+                        </span>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </ScrollArea>
+          )}
+        </CardContent>
+      </Card>
     </div>
   );
 }
 
-export default function AdvancedAnalyticsPage() {
+export default function AccountActivitiesPage() {
   return (
     <PaywallWrapper 
       requiredPlan="pro" 
-      feature="Advanced Analytics"
-      description="Get detailed insights into your trading performance, risk analysis, and portfolio optimization with our advanced analytics suite."
+      feature="Account Activities"
+      description="Track and analyze all your non-trading account activities including dividends, contributions, withdrawals, and more."
     >
-      <AdvancedAnalyticsContent />
+      <AccountActivitiesContent />
     </PaywallWrapper>
   );
 }

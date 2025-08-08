@@ -1,6 +1,9 @@
 // src/app/actions/snaptrade-trades-enhanced.ts
 'use server';
 
+import { getSnapTradeAccounts } from './snaptrade';
+import { snaptrade } from './snaptrade-client';
+
 // Enhanced trade types based on SnapTrade activities
 export interface SnapTradeActivity {
   id: string;
@@ -91,7 +94,9 @@ export interface EnhancedTradeActivity {
 export interface AnalyticsActivity {
   id: string;
   accountId: string;
-  type: 'DIVIDEND' | 'CONTRIBUTION' | 'WITHDRAWAL' | 'REI' | 'STOCK_DIVIDEND' | 'INTEREST' | 'FEE' | 'TRANSFER';
+  type: 'BUY' | 'SELL' | 'OPTIONEXPIRATION' | 'OPTIONASSIGNMENT' | 'OPTIONEXERCISE' | 
+        'DIVIDEND' | 'CONTRIBUTION' | 'WITHDRAWAL' | 'REI' | 'STOCK_DIVIDEND' | 
+        'INTEREST' | 'FEE' | 'TRANSFER';
   description: string;
   amount: number;
   currency: string;
@@ -102,55 +107,13 @@ export interface AnalyticsActivity {
   settlementDate?: string;
 }
 
-// Get all activities from the Cloudflare Worker
-async function getActivitiesFromWorker(
-  snaptradeUserId: string,
-  userSecret: string,
-  accountId: string,
-  startDate?: Date,
-  endDate?: Date,
-  type?: 'trades' | 'analytics'
-): Promise<SnapTradeActivity[] | { error: string }> {
-  const workerUrl = process.env.SNAPTRADE_WORKER_URL;
-  if (!workerUrl) {
-    return { error: 'SnapTrade Worker URL not configured' };
-  }
-
-  try {
-    const params = new URLSearchParams({
-      accountId,
-    });
-    
-    if (startDate) params.append('startDate', startDate.toISOString().split('T')[0]);
-    if (endDate) params.append('endDate', endDate.toISOString().split('T')[0]);
-    if (type) params.append('type', type);
-
-    const response = await fetch(`${workerUrl}/activities?${params}`, {
-      method: 'GET',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-User-ID': snaptradeUserId,
-        'X-User-Secret': userSecret,
-      },
-    });
-
-    if (!response.ok) {
-      const errorData = await response.json();
-      return { error: errorData.error || `Request failed with status ${response.status}` };
-    }
-
-    const activities = await response.json();
-    return Array.isArray(activities) ? activities : [];
-  } catch (error) {
-    console.error('Error fetching activities from worker:', error);
-    return { error: 'Failed to fetch activities from worker' };
-  }
-}
+// This function is no longer needed since we're using direct SnapTrade API calls
+// Removed getActivitiesFromWorker function
 
 // Convert SnapTrade activity to enhanced trade
-function convertToEnhancedTrade(activity: SnapTradeActivity): EnhancedTradeActivity {
+function convertToEnhancedTrade(activity: any): EnhancedTradeActivity {
   const isOption = !!activity.option_symbol;
-  const symbol = activity.instrument?.symbol || activity.symbol || 'UNKNOWN';
+  const symbol = activity.symbol?.symbol || activity.symbol || 'UNKNOWN';
   
   let action: EnhancedTradeActivity['action'];
   switch (activity.type) {
@@ -174,19 +137,19 @@ function convertToEnhancedTrade(activity: SnapTradeActivity): EnhancedTradeActiv
   }
 
   const enhancedTrade: EnhancedTradeActivity = {
-    id: activity.id,
-    accountId: activity.account_id,
+    id: activity.id || `${Date.now()}-${Math.random()}`,
+    accountId: activity.account?.id || activity.account_id || 'unknown',
     symbol,
-    instrument: activity.instrument?.description || symbol,
+    instrument: activity.symbol?.description || symbol,
     type: activity.type as EnhancedTradeActivity['type'],
     action,
-    quantity: Math.abs(activity.quantity || 0),
+    quantity: Math.abs(activity.quantity || activity.units || 0),
     price: activity.price || 0,
-    totalValue: Math.abs((activity.quantity || 0) * (activity.price || 0)),
-    commission: activity.commission || 0,
-    currency: activity.currency?.code || activity.instrument?.currency?.code || 'USD',
-    executedAt: new Date(activity.executed_at || activity.created_at || new Date()),
-    tradeDate: activity.trade_date || activity.executed_at?.split('T')[0] || new Date().toISOString().split('T')[0],
+    totalValue: Math.abs((activity.quantity || activity.units || 0) * (activity.price || 0)),
+    commission: activity.fee || 0,
+    currency: activity.currency?.code || 'USD',
+    executedAt: new Date(activity.trade_date || activity.settlement_date || new Date()),
+    tradeDate: activity.trade_date || new Date().toISOString().split('T')[0],
     settlementDate: activity.settlement_date,
     isOption,
     status: 'open', // Default status, will be updated during P&L calculation
@@ -207,18 +170,76 @@ function convertToEnhancedTrade(activity: SnapTradeActivity): EnhancedTradeActiv
 }
 
 // Convert SnapTrade activity to analytics activity
-function convertToAnalyticsActivity(activity: SnapTradeActivity): AnalyticsActivity {
+function convertToAnalyticsActivity(activity: any): AnalyticsActivity {
+  console.log('Converting activity:', activity);
+  
+  // Calculate amount based on activity type and available fields
+  let amount = 0;
+  let description = activity.description || '';
+  
+  // Handle different amount fields that SnapTrade uses
+  if (activity.amount !== undefined && activity.amount !== null) {
+    amount = Math.abs(activity.amount);
+  } else if (activity.quantity && activity.price) {
+    amount = Math.abs(activity.quantity * activity.price);
+  } else if (activity.units && activity.price) {
+    amount = Math.abs(activity.units * activity.price);
+  } else if (activity.fee) {
+    amount = Math.abs(activity.fee);
+  }
+
+  // Generate description based on activity type
+  const symbol = activity.symbol?.symbol || activity.symbol || 'Unknown';
+  
+  switch (activity.type) {
+    case 'BUY':
+    case 'SELL':
+      description = description || `${activity.type} ${activity.quantity || activity.units || 0} shares of ${symbol}`;
+      break;
+    case 'OPTIONEXPIRATION':
+    case 'OPTIONASSIGNMENT':
+    case 'OPTIONEXERCISE':
+      description = description || `${activity.type} ${activity.quantity || activity.units || 0} contracts of ${symbol}`;
+      break;
+    case 'DIVIDEND':
+      description = description || `Dividend from ${symbol}`;
+      break;
+    case 'CONTRIBUTION':
+      description = description || 'Cash contribution to account';
+      break;
+    case 'WITHDRAWAL':
+      description = description || 'Cash withdrawal from account';
+      break;
+    case 'REI':
+      description = description || `Dividend reinvestment in ${symbol}`;
+      break;
+    case 'STOCK_DIVIDEND':
+      description = description || `Stock dividend from ${symbol}`;
+      break;
+    case 'INTEREST':
+      description = description || 'Interest earned';
+      break;
+    case 'FEE':
+      description = description || 'Account fee';
+      break;
+    case 'TRANSFER':
+      description = description || `Transfer of ${symbol}`;
+      break;
+    default:
+      description = description || `${activity.type} transaction`;
+  }
+
   return {
-    id: activity.id,
-    accountId: activity.account_id,
+    id: activity.id || `${Date.now()}-${Math.random()}`,
+    accountId: activity.account?.id || activity.account_id || 'unknown',
     type: activity.type as AnalyticsActivity['type'],
-    description: activity.description || `${activity.type} transaction`,
-    amount: Math.abs((activity.quantity || 0) * (activity.price || 0)) || 0,
-    currency: activity.currency?.code || activity.instrument?.currency?.code || 'USD',
-    symbol: activity.instrument?.symbol || activity.symbol,
-    instrument: activity.instrument?.description,
-    executedAt: new Date(activity.executed_at || activity.created_at || new Date()),
-    tradeDate: activity.trade_date || activity.executed_at?.split('T')[0] || new Date().toISOString().split('T')[0],
+    description,
+    amount,
+    currency: activity.currency?.code || 'USD',
+    symbol: activity.symbol?.symbol || activity.symbol,
+    instrument: activity.symbol?.description,
+    executedAt: new Date(activity.trade_date || activity.settlement_date || new Date()),
+    tradeDate: activity.trade_date || new Date().toISOString().split('T')[0],
     settlementDate: activity.settlement_date,
   };
 }
@@ -238,46 +259,37 @@ export async function getEnhancedTradeActivities(
     if (accountId) {
       accountIds = [accountId];
     } else {
-      const workerUrl = process.env.SNAPTRADE_WORKER_URL;
-      if (!workerUrl) {
-        return { error: 'SnapTrade Worker URL not configured' };
+      const accounts = await getSnapTradeAccounts(snaptradeUserId, userSecret);
+      if ('error' in accounts) {
+        return { error: 'Failed to fetch accounts: ' + accounts.error };
       }
-
-      const accountsResponse = await fetch(`${workerUrl}/accounts`, {
-        headers: {
-          'X-User-ID': snaptradeUserId,
-          'X-User-Secret': userSecret,
-        },
-      });
-
-      if (!accountsResponse.ok) {
-        return { error: 'Failed to fetch accounts' };
-      }
-
-      const accounts = await accountsResponse.json();
       accountIds = accounts.map((acc: any) => acc.id);
     }
 
     const allActivities: EnhancedTradeActivity[] = [];
 
-    // Fetch activities for each account
-    for (const accId of accountIds) {
-      const activitiesResult = await getActivitiesFromWorker(
-        snaptradeUserId,
-        userSecret,
-        accId,
-        startDate,
-        endDate,
-        'trades' // Only get trade-related activities
-      );
+    // Fetch trade activities using SnapTrade API
+    try {
+      console.log('=== Fetching TRADE activities ===');
+      const activitiesResponse = await snaptrade.transactionsAndReporting.getActivities({
+        userId: snaptradeUserId,
+        userSecret: userSecret,
+        accounts: accountIds.join(','),
+        startDate: startDate?.toISOString().split('T')[0],
+        endDate: endDate?.toISOString().split('T')[0],
+        type: 'BUY,SELL,OPTIONEXPIRATION,OPTIONASSIGNMENT,OPTIONEXERCISE', // Only trade-related activities
+      });
 
-      if ('error' in activitiesResult) {
-        console.error(`Error fetching activities for account ${accId}:`, activitiesResult.error);
-        continue; // Skip this account but continue with others
+      if (activitiesResponse.data && Array.isArray(activitiesResponse.data)) {
+        console.log(`✅ SUCCESS: Found ${activitiesResponse.data.length} trade activities`);
+        const enhancedTrades = activitiesResponse.data.map(convertToEnhancedTrade);
+        allActivities.push(...enhancedTrades);
+      } else {
+        console.warn('No trade activities found or invalid response format');
       }
-
-      const enhancedTrades = activitiesResult.map(convertToEnhancedTrade);
-      allActivities.push(...enhancedTrades);
+    } catch (error) {
+      console.error('Error fetching trade activities from SnapTrade API:', error);
+      return { error: 'Failed to fetch trade activities from SnapTrade API' };
     }
 
     // Sort by execution date, most recent first
@@ -301,59 +313,176 @@ export async function getAnalyticsActivities(
   endDate?: Date,
   accountId?: string
 ): Promise<AnalyticsActivity[] | { error: string }> {
+  console.log('=== Starting getAnalyticsActivities ===');
+  console.log('Parameters:', {
+    snaptradeUserId,
+    userSecret: userSecret ? `${userSecret.substring(0, 8)}...` : 'undefined',
+    startDate: startDate?.toISOString(),
+    endDate: endDate?.toISOString(),
+    accountId
+  });
+
   try {
     // Get all accounts if no specific account ID is provided
     let accountIds: string[] = [];
     
     if (accountId) {
       accountIds = [accountId];
+      console.log('Using specific account ID:', accountId);
     } else {
-      const workerUrl = process.env.SNAPTRADE_WORKER_URL;
-      if (!workerUrl) {
-        return { error: 'SnapTrade Worker URL not configured' };
-      }
-
-      const accountsResponse = await fetch(`${workerUrl}/accounts`, {
-        headers: {
-          'X-User-ID': snaptradeUserId,
-          'X-User-Secret': userSecret,
-        },
+      console.log('Fetching all user accounts...');
+      const accountsResponse = await snaptrade.accountInformation.listUserAccounts({
+        userId: snaptradeUserId,
+        userSecret: userSecret,
       });
-
-      if (!accountsResponse.ok) {
-        return { error: 'Failed to fetch accounts' };
+      console.log('Accounts response:', accountsResponse);
+      
+      if (accountsResponse.data && Array.isArray(accountsResponse.data)) {
+        accountIds = accountsResponse.data.map(acc => acc.id);
+        console.log('Extracted account IDs:', accountIds);
+      } else {
+        console.error('No accounts found or invalid response format');
+        return { error: 'No accounts found' };
       }
-
-      const accounts = await accountsResponse.json();
-      accountIds = accounts.map((acc: any) => acc.id);
     }
 
-    const allActivities: AnalyticsActivity[] = [];
+    if (accountIds.length === 0) {
+      console.error('No account IDs available');
+      return { error: 'No account IDs available' };
+    }
 
-    // Fetch activities for each account
-    for (const accId of accountIds) {
-      const activitiesResult = await getActivitiesFromWorker(
-        snaptradeUserId,
-        userSecret,
-        accId,
-        startDate,
-        endDate,
-        'analytics' // Only get analytics-related activities
+    const allActivities: any[] = [];
+
+    // Paginated fetch with multiple requests to get all activities
+    const fetchActivitiesWithPagination = async (currentEndDate?: Date): Promise<boolean> => {
+      const attempts = [
+        {
+          name: 'All activities without type filter',
+          params: {
+            userId: snaptradeUserId,
+            userSecret: userSecret,
+            accounts: accountIds.join(','),
+            startDate: startDate?.toISOString().split('T')[0],
+            endDate: currentEndDate?.toISOString().split('T')[0] || endDate?.toISOString().split('T')[0],
+          }
+        },
+        {
+          name: 'No date filter',
+          params: {
+            userId: snaptradeUserId,
+            userSecret: userSecret,
+            accounts: accountIds.join(','),
+            ...(currentEndDate && { endDate: currentEndDate.toISOString().split('T')[0] })
+          }
+        }
+      ];
+
+      for (const attempt of attempts) {
+        try {
+          console.log(`=== Attempting: ${attempt.name} ${currentEndDate ? `(paginated, endDate: ${currentEndDate.toISOString().split('T')[0]})` : '(initial)'} ===`);
+          console.log('Request parameters:', {
+            ...attempt.params,
+            userSecret: userSecret ? `${userSecret.substring(0, 8)}...` : 'undefined'
+          });
+          
+          const activitiesResponse = await snaptrade.transactionsAndReporting.getActivities(attempt.params);
+
+          console.log('=== Activities API Response ===');
+          console.log('Response status:', activitiesResponse.status);
+          console.log('Response data type:', typeof activitiesResponse.data);
+          console.log('Response data length:', Array.isArray(activitiesResponse.data) ? activitiesResponse.data.length : 'not array');
+          
+          if (activitiesResponse.data && Array.isArray(activitiesResponse.data) && activitiesResponse.data.length > 0) {
+            console.log(`✅ SUCCESS: Found ${activitiesResponse.data.length} activities with ${attempt.name}`);
+            
+            // Add activities, avoiding duplicates based on id
+            const existingIds = new Set(allActivities.map(a => a.id));
+            const newActivities = activitiesResponse.data.filter(activity => !existingIds.has(activity.id));
+            console.log(`Adding ${newActivities.length} new activities (${activitiesResponse.data.length - newActivities.length} duplicates filtered)`);
+            
+            allActivities.push(...newActivities);
+            
+            // Return true if we got the maximum (1000) activities, indicating more pages might exist
+            return activitiesResponse.data.length === 1000;
+          } else {
+            console.log(`❌ ${attempt.name} returned empty or invalid data:`, activitiesResponse.data);
+          }
+        } catch (attemptError) {
+          console.error(`❌ Error with ${attempt.name}:`, attemptError);
+          continue; // Try next approach
+        }
+      }
+      
+      return false; // No successful request found
+    };
+
+    // Initial fetch
+    console.log('=== Starting paginated fetch ===');
+    let hasMorePages = await fetchActivitiesWithPagination();
+    let pageCount = 1;
+    
+    // Continue fetching if we hit the 1000 activity limit
+    while (hasMorePages && pageCount < 10) { // Safety limit of 10 pages (10,000 activities)
+      pageCount++;
+      
+      // Sort current activities to get the oldest date for next pagination
+      allActivities.sort((a, b) => 
+        new Date(b.trade_date || b.settlement_date || '').getTime() - new Date(a.trade_date || a.settlement_date || '').getTime()
       );
-
-      if ('error' in activitiesResult) {
-        console.error(`Error fetching activities for account ${accId}:`, activitiesResult.error);
-        continue; // Skip this account but continue with others
+      
+      if (allActivities.length === 0) break;
+      
+      // Get the oldest activity date from current results
+      const oldestActivity = allActivities[allActivities.length - 1];
+      const oldestActivityDate = new Date(oldestActivity.trade_date || oldestActivity.settlement_date || '');
+      
+      console.log(`=== Fetching page ${pageCount} (activities before ${oldestActivityDate.toISOString().split('T')[0]}) ===`);
+      
+      // Subtract 1 day to avoid getting the same last transaction
+      const nextEndDate = new Date(oldestActivityDate);
+      nextEndDate.setDate(nextEndDate.getDate() - 1);
+      
+      // Check if we've gone past our start date filter
+      if (startDate && nextEndDate < startDate) {
+        console.log('Reached start date limit, stopping pagination');
+        break;
       }
-
-      const analyticsActivities = activitiesResult.map(convertToAnalyticsActivity);
-      allActivities.push(...analyticsActivities);
+      
+      hasMorePages = await fetchActivitiesWithPagination(nextEndDate);
     }
+    
+    console.log(`=== Pagination complete: ${pageCount} pages, ${allActivities.length} total activities ===`);
+
+    if (allActivities.length === 0) {
+      console.warn('=== No activities found after all attempts ===');
+      console.log('This could mean:');
+      console.log('1. No activity in the specified date range');
+      console.log('2. Account has no activity history');
+      console.log('3. API credentials may not have access to activity data');
+      console.log('4. SnapTrade API may be returning data in a different format');
+      
+      // Don't return an error if we simply have no activities - this is valid
+      return [];
+    }
+
+    console.log(`Total activities fetched: ${allActivities.length}`);
+
+    // Filter to only non-trading activities
+    const nonTradingTypes = ['DIVIDEND', 'CONTRIBUTION', 'WITHDRAWAL', 'REI', 'STOCK_DIVIDEND', 'INTEREST', 'FEE', 'TRANSFER'];
+    const nonTradingActivities = allActivities.filter(activity => 
+      nonTradingTypes.includes(activity.type)
+    );
+
+    console.log(`Filtered to ${nonTradingActivities.length} non-trading activities`);
+
+    // Convert to analytics activities
+    const analyticsActivities = nonTradingActivities.map(convertToAnalyticsActivity);
 
     // Sort by execution date, most recent first
-    allActivities.sort((a, b) => b.executedAt.getTime() - a.executedAt.getTime());
+    analyticsActivities.sort((a, b) => b.executedAt.getTime() - a.executedAt.getTime());
 
-    return allActivities;
+    console.log(`=== End getAnalyticsActivities: ${analyticsActivities.length} activities ===`);
+    return analyticsActivities;
   } catch (error) {
     console.error('Error getting analytics activities:', error);
     return { error: 'Failed to get analytics activities.' };

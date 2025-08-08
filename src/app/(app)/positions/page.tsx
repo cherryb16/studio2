@@ -226,7 +226,37 @@ const PositionsPage = () => {
 
   // Sorting state
   const [sortColumn, setSortColumn] = useState<string>('');
-  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
+  const [sortDirection, setSortDirection] = useState<'desc' | 'asc'>('desc');
+
+  // Handle column sorting
+  const handleSort = (column: string) => {
+    if (sortColumn === column) {
+      // Rotate through: desc -> asc -> none (3 states)
+      if (sortDirection === 'desc') {
+        setSortDirection('asc');
+      } else {
+        // Reset to no sort (asc -> none)
+        setSortColumn('');
+        setSortDirection('desc'); // Reset direction for next time
+      }
+    } else {
+      // First click on new column starts with desc
+      setSortColumn(column);
+      setSortDirection('desc');
+    }
+  };
+
+  // Sort indicator component - only show when column is actively sorted
+  const SortIndicator = ({ column }: { column: string }) => {
+    if (sortColumn !== column) {
+      return null; // Don't show any arrow when not sorted
+    }
+    return (
+      <span className="text-blue-600 ml-1">
+        {sortDirection === 'desc' ? '↓' : '↑'}
+      </span>
+    );
+  };
 
   // Close dropdowns when clicking outside
   useEffect(() => {
@@ -505,25 +535,108 @@ const PositionsPage = () => {
     }
   };
 
+  // Sort data array
+  const sortData = (data: any[], column: string, direction: 'asc' | 'desc') => {
+    return [...data].sort((a, b) => {
+      let aValue: any = null;
+      let bValue: any = null;
+
+      // Get values based on column name
+      switch (column) {
+        case 'Symbol':
+          aValue = a.symbol?.symbol?.symbol || '';
+          bValue = b.symbol?.symbol?.symbol || '';
+          break;
+        case 'Price':
+          // Check if this is option data (has option_symbol) and multiply by 100
+          aValue = a.symbol?.option_symbol ? (a.price || 0) * 100 : (a.price || 0);
+          bValue = b.symbol?.option_symbol ? (b.price || 0) * 100 : (b.price || 0);
+          break;
+        case 'Value':
+          aValue = (a.units || 0) * (a.price || 0);
+          bValue = (b.units || 0) * (b.price || 0);
+          break;
+        case 'Quantity':
+          aValue = a.units || 0;
+          bValue = b.units || 0;
+          break;
+        case 'Purchase Price':
+          aValue = a.average_purchase_price || 0;
+          bValue = b.average_purchase_price || 0;
+          break;
+        case 'Unrealized P/L':
+          aValue = a.open_pnl || 0;
+          bValue = b.open_pnl || 0;
+          break;
+        case 'P/L %':
+          aValue = a.average_purchase_price ? ((a.price || 0) - a.average_purchase_price) / a.average_purchase_price * 100 : 0;
+          bValue = b.average_purchase_price ? ((b.price || 0) - b.average_purchase_price) / b.average_purchase_price * 100 : 0;
+          break;
+        // Option columns
+        case 'Underlying':
+          aValue = a.symbol?.option_symbol?.underlying_symbol?.symbol || '';
+          bValue = b.symbol?.option_symbol?.underlying_symbol?.symbol || '';
+          break;
+        case 'Strike':
+          aValue = a.symbol?.option_symbol?.strike_price || 0;
+          bValue = b.symbol?.option_symbol?.strike_price || 0;
+          break;
+        case 'Type':
+          aValue = a.symbol?.option_symbol?.option_type || '';
+          bValue = b.symbol?.option_symbol?.option_type || '';
+          break;
+        case 'Expiration':
+          aValue = a.symbol?.option_symbol?.expiration_date || '';
+          bValue = b.symbol?.option_symbol?.expiration_date || '';
+          break;
+        default:
+          aValue = 0;
+          bValue = 0;
+      }
+
+      // Handle string vs number comparison
+      if (typeof aValue === 'string' && typeof bValue === 'string') {
+        return direction === 'asc' 
+          ? aValue.localeCompare(bValue) 
+          : bValue.localeCompare(aValue);
+      } else {
+        const numA = Number(aValue) || 0;
+        const numB = Number(bValue) || 0;
+        return direction === 'asc' ? numA - numB : numB - numA;
+      }
+    });
+  };
+
   // Table for equities
   const renderEquitiesTable = (data: Position[] | undefined) => {
     if (!data || !Array.isArray(data) || data.length === 0) {
       return <p className="text-gray-500 p-4">No equities available.</p>;
     }
+
+    // Sort data if a column is selected
+    const sortedData = sortColumn ? sortData(data, sortColumn, sortDirection) : data;
+
     return (
       <div className="overflow-x-auto">
         <table className="w-full border-collapse">
           <thead>
             <tr className="border-b border-gray-200 dark:border-zinc-700">
               {visibleEquityColumns.map((col) => (
-                <th key={col} className="text-left p-3 font-medium text-gray-700 dark:text-gray-300">
-                  {col}
+                <th 
+                  key={col} 
+                  className="text-left p-3 font-medium text-gray-700 dark:text-gray-300 cursor-pointer hover:bg-gray-50 dark:hover:bg-zinc-800 select-none"
+                  onClick={() => handleSort(col)}
+                >
+                  <div className="flex items-center">
+                    {col}
+                    <SortIndicator column={col} />
+                  </div>
                 </th>
               ))}
             </tr>
           </thead>
           <tbody>
-            {data.map((position, index) => {
+            {sortedData.map((position, index) => {
               if (!position) return null;
               // Updated for SnapTrade API structure: symbol.symbol.symbol
               const symbolToDisplay = position.symbol?.symbol?.symbol || 
@@ -586,20 +699,31 @@ const PositionsPage = () => {
     if (!data || !Array.isArray(data) || data.length === 0) {
       return <p className="text-gray-500 p-4">No options available.</p>;
     }
+
+    // Sort data if a column is selected
+    const sortedData = sortColumn ? sortData(data, sortColumn, sortDirection) : data;
+
     return (
       <div className="overflow-x-auto">
         <table className="w-full border-collapse">
           <thead>
             <tr className="border-b border-gray-200 dark:border-zinc-700">
               {visibleOptionColumns.map((col) => (
-                <th key={col} className="text-left p-3 font-medium text-gray-700 dark:text-gray-300">
-                  {col}
+                <th 
+                  key={col} 
+                  className="text-left p-3 font-medium text-gray-700 dark:text-gray-300 cursor-pointer hover:bg-gray-50 dark:hover:bg-zinc-800 select-none"
+                  onClick={() => handleSort(col)}
+                >
+                  <div className="flex items-center">
+                    {col}
+                    <SortIndicator column={col} />
+                  </div>
                 </th>
               ))}
             </tr>
           </thead>
           <tbody>
-            {data.map((option, index) => {
+            {sortedData.map((option, index) => {
               if (!option) return null;
               const optionSymbol = option.symbol?.option_symbol;
               const underlying = optionSymbol?.underlying_symbol?.symbol || '-';
@@ -617,9 +741,9 @@ const PositionsPage = () => {
                       {col === 'Quantity' && String(option.units || '-')}
                       {col === 'Price' &&
                         (
-                          (option.price || 0) < 0
-                            ? `-$${Math.abs(option.price || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-                            : `$${(option.price || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                          ((option.price || 0) * 100) < 0
+                            ? `-$${Math.abs((option.price || 0) * 100).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                            : `$${((option.price || 0) * 100).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
                         )}
                       {col === 'Purchase Price' &&
                         (

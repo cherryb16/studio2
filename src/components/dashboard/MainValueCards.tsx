@@ -5,6 +5,13 @@ import { Progress } from '@/components/ui/progress';
 import { DollarSign, Wallet, TrendingUp, Target, ArrowUpRight, ArrowDownRight } from 'lucide-react';
 
 export default function MainValueCards({ analyticsData, performanceData, riskData, realizedGainsData }: any) {
+  const formatCurrency = (amount: number) => {
+    return new Intl.NumberFormat('en-US', {
+      style: 'currency',
+      currency: 'USD',
+    }).format(amount);
+  };
+
   return (
     <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
       {/* Total Portfolio Value */}
@@ -15,7 +22,7 @@ export default function MainValueCards({ analyticsData, performanceData, riskDat
         </CardHeader>
         <CardContent>
           <div className="text-2xl font-bold">
-            ${analyticsData?.totalBalance?.toLocaleString() || '0'}
+            {formatCurrency(analyticsData?.totalBalance || 0)}
           </div>
           {performanceData?.totalReturnPercentage !== undefined && (
             <p className={`text-xs ${performanceData.totalReturnPercentage >= 0 ? 'text-green-600' : 'text-red-600'}`}>
@@ -34,7 +41,7 @@ export default function MainValueCards({ analyticsData, performanceData, riskDat
         </CardHeader>
         <CardContent>
           <div className="text-2xl font-bold">
-            ${analyticsData?.cashBalance?.toLocaleString() || '0'}
+            {formatCurrency(analyticsData?.cashBalance || 0)}
           </div>
           <p className="text-xs text-muted-foreground">
             {analyticsData?.composition?.cash?.toFixed(1) || '0'}% of portfolio
@@ -50,8 +57,7 @@ export default function MainValueCards({ analyticsData, performanceData, riskDat
         </CardHeader>
         <CardContent>
           <div className={`text-2xl font-bold ${analyticsData?.unrealizedPnL?.total >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-            {analyticsData?.unrealizedPnL?.total >= 0 ? '+' : '-'}
-            ${Math.abs(analyticsData?.unrealizedPnL?.total || 0).toLocaleString()}
+            {formatCurrency(analyticsData?.unrealizedPnL?.total || 0)}
           </div>
           <p className="text-xs text-muted-foreground">
             {analyticsData?.unrealizedPnL?.totalPercentage?.toFixed(2) || '0'}% return
@@ -67,8 +73,7 @@ export default function MainValueCards({ analyticsData, performanceData, riskDat
         </CardHeader>
         <CardContent>
           <div className={`text-2xl font-bold ${realizedGainsData?.totalRealizedPnL >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-            {realizedGainsData?.totalRealizedPnL >= 0 ? '+' : ''}
-            ${realizedGainsData?.totalRealizedPnL?.toLocaleString() || '0'}
+            {formatCurrency(realizedGainsData?.totalRealizedPnL || 0)}
           </div>
           {realizedGainsData?.winRate !== undefined && (
             <p className="text-xs text-muted-foreground">

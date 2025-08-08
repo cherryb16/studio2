@@ -4,6 +4,9 @@ import React, { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useAuth } from '@/hooks/use-auth';
 import { useCachedAccounts } from '@/hooks/use-cached-accounts';
+import { RefreshCw } from 'lucide-react';
+import { useToast } from '@/components/ui/use-toast';
+import { triggerManualSync } from '@/app/actions/data-sync/manual-sync';
 import { 
   getEnhancedTrades, 
   getTradeSummaryStats,
@@ -27,6 +30,12 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import {
   Dialog,
   DialogContent,
@@ -73,7 +82,7 @@ interface GroupedTrade {
   totalValue: number;
   totalFees: number;
   realizedPnL?: number;
-  status: 'open' | 'closed' | 'partial';
+  status: 'open' | 'closed' | 'partial' | 'expired';
   currency: string;
   executedAt: Date;
   holdingPeriod?: number;
@@ -152,35 +161,37 @@ function groupRelatedTrades(trades: EnhancedTrade[]): GroupedTrade[] {
     if (isOption) {
       // Options logic
       if (sellTrades.length > 0 && buyTrades.length === 0) {
-        // Sold options only (covered calls, cash secured puts)
-        const totalSoldNotExpired = sellTrades.filter(t => t.status !== 'expired').length;
-        
-        if (totalSoldNotExpired === 0) {
-          // All sold options have expired - this is a closed profitable position
+        // Sold to open (call/put), no buys
+        const zeroPriceTrades = sellTrades.filter(t => t.price === 0);
+        if (zeroPriceTrades.length > 0) {
+          // Has zero price trades - treat as expired, this is good for sell-to-open
           status = 'closed';
-          averageEntryPrice = 0; // Entry cost for selling options
-          averageExitPrice = totalSellValue / totalSellUnits; // Premium received
-          realizedPnL = totalSellValue * multiplier - totalFees; // Premium received minus fees
-          totalUnits = 0; // Position is closed
+          averageEntryPrice = 0;
+          // Calculate P&L based on non-zero price trades
+          const nonZeroTrades = sellTrades.filter(t => t.price > 0);
+          const premiumReceived = nonZeroTrades.reduce((sum, t) => sum + (t.units * t.price), 0);
+          realizedPnL = premiumReceived * multiplier - totalFees;
+          averageExitPrice = nonZeroTrades.length > 0 ? premiumReceived / nonZeroTrades.reduce((sum, t) => sum + t.units, 0) : 0;
+          totalUnits = 0;
         } else {
-          // Some options still open
+          // Still open positions
           status = 'open';
           averageEntryPrice = 0;
           averageExitPrice = totalSellValue / totalSellUnits;
           totalUnits = totalSellUnits;
-          // No realized P&L until closed
         }
       } else if (buyTrades.length > 0 && sellTrades.length === 0) {
-        // Bought options only
-        if (totalExpiredUnits === totalBuyUnits) {
-          // All bought options expired worthless
-          status = 'closed';
+        // Bought to open (call/put), no sells
+        const zeroPriceTrades = buyTrades.filter(t => t.price === 0);
+        if (zeroPriceTrades.length > 0) {
+          // Has zero price trades - expired worthless, which is bad for buy-to-open
+          status = 'expired';
           averageEntryPrice = totalBuyValue / totalBuyUnits;
-          averageExitPrice = 0; // Expired worthless
-          realizedPnL = -totalBuyValue * multiplier - totalFees; // Loss = premium paid + fees
+          averageExitPrice = 0;
+          realizedPnL = -totalBuyValue * multiplier - totalFees; // 100% loss
           totalUnits = 0;
         } else {
-          // Some options still open
+          // Still open positions
           status = 'open';
           averageEntryPrice = totalBuyValue / totalBuyUnits;
           totalUnits = totalBuyUnits;
@@ -298,6 +309,7 @@ const getStartDate = (period: 'day' | 'week' | 'month' | 'year'): Date => {
 
 export default function EnhancedTradeJournalPage() {
   const { user } = useAuth();
+  const { toast } = useToast();
   const [selectedPeriod, setSelectedPeriod] = useState<'day' | 'week' | 'month' | 'year' | 'all'>('month');
   const [selectedTrade, setSelectedTrade] = useState<EnhancedTrade | null>(null);
   const [isJournalOpen, setIsJournalOpen] = useState(false);
@@ -706,20 +718,53 @@ export default function EnhancedTradeJournalPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold">Trading Activity & Journal</h1>
-        <p className="text-muted-foreground">
-          Track your trades, options activity, and document your insights
-        </p>
-      </div>
-
-      {/* Enhanced Summary Stats */}
+        <div className="flex justify-between items-center">
+          <div>
+            <h1 className="text-3xl font-bold">Trading Activity & Journal</h1>
+            <p className="text-muted-foreground">
+              Track your trades, options activity, and document your insights
+            </p>
+          </div>
+          <Button
+            variant="outline"
+            onClick={async () => {
+              try {
+                await triggerManualSync(user.uid);
+                toast({
+                  title: "Sync started",
+                  description: "Your trades are being synced. This may take a few moments.",
+                });
+              } catch (error: any) {
+                toast({
+                  title: "Sync failed",
+                  description: error.message,
+                  variant: "destructive",
+                });
+              }
+            }}
+          >
+            <RefreshCw className="h-4 w-4 mr-2" />
+            Sync Trades
+          </Button>
+        </div>      {/* Enhanced Summary Stats */}
       {filteredStats && (
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-5">
           <Card className="cursor-pointer hover:bg-muted/50" onClick={() => toggleStatsCardExpansion('pnl')}>
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
               <CardTitle className="text-sm font-medium flex items-center gap-2">
-                Total P&L
+                <TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger>
+                      <span className="border-dotted border-b border-muted-foreground cursor-help">Total P&L</span>
+                    </TooltipTrigger>
+                    <TooltipContent className="max-w-[200px]">
+                      <div className="space-y-2">
+                        <p>Sum of all realized profits and losses from closed trades</p>
+                        <p className="text-xs text-muted-foreground">Includes multiplier for options (×100)</p>
+                      </div>
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
                 {expandedStatsCards.has('pnl') ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
               </CardTitle>
               <DollarSign className="h-4 w-4 text-muted-foreground" />
@@ -765,7 +810,21 @@ export default function EnhancedTradeJournalPage() {
           <Card className="cursor-pointer hover:bg-muted/50" onClick={() => toggleStatsCardExpansion('winrate')}>
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
               <CardTitle className="text-sm font-medium flex items-center gap-2">
-                Win Rate
+                <TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger>
+                      <span className="border-dotted border-b border-muted-foreground cursor-help">Win Rate</span>
+                    </TooltipTrigger>
+                    <TooltipContent className="max-w-[200px]">
+                      <div className="space-y-2">
+                        <p>Percentage of closed trades that are profitable</p>
+                        <p className="text-xs text-muted-foreground">
+                          (Winning Trades / Total Closed Trades) × 100
+                        </p>
+                      </div>
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
                 {expandedStatsCards.has('winrate') ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
               </CardTitle>
               <Target className="h-4 w-4 text-muted-foreground" />
@@ -790,15 +849,47 @@ export default function EnhancedTradeJournalPage() {
                     </div>
                     <div className="flex justify-between">
                       <span>Open Trades:</span>
-                      <span>{filteredStats.totalTrades - filteredStats.closedTrades}</span>
+                      <span>{(filteredStats.stockTrades + filteredStats.optionTrades) - filteredStats.closedTrades}</span>
                     </div>
                     <div className="flex justify-between">
-                      <span>Win %:</span>
-                      <span className="text-green-600">{((filteredStats.winningTrades / filteredStats.totalTrades) * 100).toFixed(1)}%</span>
+                      <TooltipProvider>
+                        <Tooltip>
+                          <TooltipTrigger>
+                            <span className="border-dotted border-b border-muted-foreground cursor-help">Win %:</span>
+                          </TooltipTrigger>
+                          <TooltipContent className="max-w-[200px]">
+                            <div className="space-y-2">
+                              <p>Win % = (Winning Trades / Total Closed Trades) × 100</p>
+                              <p className="text-xs text-muted-foreground">Example: 3 wins out of 5 closed trades = 60%</p>
+                            </div>
+                          </TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
+                      <span className="text-green-600">
+                        {(filteredStats.closedTrades > 0
+                          ? (filteredStats.winningTrades / filteredStats.closedTrades) * 100
+                          : 0).toFixed(1)}%
+                      </span>
                     </div>
                     <div className="flex justify-between">
-                      <span>Loss %:</span>
-                      <span className="text-red-600">{((filteredStats.losingTrades / filteredStats.totalTrades) * 100).toFixed(1)}%</span>
+                      <TooltipProvider>
+                        <Tooltip>
+                          <TooltipTrigger>
+                            <span className="border-dotted border-b border-muted-foreground cursor-help">Loss %:</span>
+                          </TooltipTrigger>
+                          <TooltipContent className="max-w-[200px]">
+                            <div className="space-y-2">
+                              <p>Loss % = (Losing Trades / Total Closed Trades) × 100</p>
+                              <p className="text-xs text-muted-foreground">Example: 2 losses out of 5 closed trades = 40%</p>
+                            </div>
+                          </TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
+                      <span className="text-red-600">
+                        {(filteredStats.closedTrades > 0
+                          ? (filteredStats.losingTrades / filteredStats.closedTrades) * 100
+                          : 0).toFixed(1)}%
+                      </span>
                     </div>
                   </div>
                 </div>
@@ -809,7 +900,36 @@ export default function EnhancedTradeJournalPage() {
           <Card className="cursor-pointer hover:bg-muted/50" onClick={() => toggleStatsCardExpansion('profitfactor')}>
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
               <CardTitle className="text-sm font-medium flex items-center gap-2">
-                Profit Factor
+                <TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger>
+                      <span className="border-dotted border-b border-muted-foreground cursor-help">Profit Factor</span>
+                    </TooltipTrigger>
+                    <TooltipContent className="max-w-[200px]">
+                      <div className="space-y-2">
+                        <p>Ratio of total profits to total losses (measures risk-adjusted performance)</p>
+                        <p className="text-xs text-muted-foreground">
+                          Total Gross Profits / Total Gross Losses
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          Example: $10,000 profits / $5,000 losses = 2.0 profit factor
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          • {'>'}1.0: Trading system is profitable
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          • {'>'}1.5: Good trading system
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          • {'>'}2.0: Excellent trading system
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          • {'>'}3.0: Exceptional trading system
+                        </p>
+                      </div>
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
                 {expandedStatsCards.has('profitfactor') ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
               </CardTitle>
               <Activity className="h-4 w-4 text-muted-foreground" />
@@ -818,9 +938,23 @@ export default function EnhancedTradeJournalPage() {
               <div className="text-2xl font-bold">
                 {filteredStats.profitFactor.toFixed(2)}
               </div>
-              <p className="text-xs text-muted-foreground">
-                Avg Win: {formatCurrency(filteredStats.avgWin)}
-              </p>
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger>
+                    <p className="text-xs text-muted-foreground border-dotted border-b cursor-help">
+                      Avg Win: {formatCurrency(filteredStats.avgWin)}
+                    </p>
+                  </TooltipTrigger>
+                  <TooltipContent className="max-w-[200px]">
+                    <div className="space-y-2">
+                      <p>Average profit from winning trades</p>
+                      <p className="text-xs text-muted-foreground">
+                        Total Profits / Number of Winning Trades
+                      </p>
+                    </div>
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
               {expandedStatsCards.has('profitfactor') && (
                 <div className="mt-4 space-y-2 border-t pt-3">
                   <div className="text-xs space-y-1">
@@ -833,7 +967,27 @@ export default function EnhancedTradeJournalPage() {
                       <span className="text-red-600">{formatCurrency(filteredStats.avgLoss)}</span>
                     </div>
                     <div className="flex justify-between">
-                      <span>Win/Loss Ratio:</span>
+                      <TooltipProvider>
+                        <Tooltip>
+                          <TooltipTrigger>
+                            <span className="border-dotted border-b border-muted-foreground cursor-help">Win/Loss Ratio:</span>
+                          </TooltipTrigger>
+                          <TooltipContent className="max-w-[250px]">
+                            <div className="space-y-2">
+                              <p>Ratio of average winning trade to average losing trade</p>
+                              <p className="text-xs text-muted-foreground">
+                                Average Win Amount / Average Loss Amount
+                              </p>
+                              <p className="text-xs text-muted-foreground">
+                                Example: If avg win is $200 and avg loss is $100, ratio is 2.0
+                              </p>
+                              <p className="text-xs text-muted-foreground">
+                                Higher ratios are better. {'>'} 1.5 is good, {'>'} 2.0 is excellent
+                              </p>
+                            </div>
+                          </TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
                       <span>{filteredStats.avgLoss > 0 ? (filteredStats.avgWin / filteredStats.avgLoss).toFixed(2) : 'N/A'}</span>
                     </div>
                     <div className="flex justify-between">
@@ -876,11 +1030,11 @@ export default function EnhancedTradeJournalPage() {
                     </div>
                     <div className="flex justify-between">
                       <span>Option %:</span>
-                      <span>{filteredStats.totalTrades > 0 ? ((filteredStats.optionTrades / filteredStats.totalTrades) * 100).toFixed(1) : 0}%</span>
+                      <span>{(filteredStats.stockTrades + filteredStats.optionTrades) > 0 ? ((filteredStats.optionTrades / (filteredStats.stockTrades + filteredStats.optionTrades)) * 100).toFixed(1) : 0}%</span>
                     </div>
                     <div className="flex justify-between">
                       <span>Stock %:</span>
-                      <span>{filteredStats.totalTrades > 0 ? ((filteredStats.stockTrades / filteredStats.totalTrades) * 100).toFixed(1) : 0}%</span>
+                      <span>{(filteredStats.stockTrades + filteredStats.optionTrades) > 0 ? ((filteredStats.stockTrades / (filteredStats.stockTrades + filteredStats.optionTrades)) * 100).toFixed(1) : 0}%</span>
                     </div>
                   </div>
                 </div>
@@ -1085,7 +1239,7 @@ export default function EnhancedTradeJournalPage() {
                               {isExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
                               <div>
                                 <div className="font-medium">
-                                  {format(groupedTrade.executedAt, 'MMM dd, yyyy')}
+                                  {format(new Date(format(groupedTrade.executedAt, 'yyyy-MM-dd')), 'MMM dd, yyyy')}
                                 </div>
                                 <div className="text-xs text-muted-foreground">
                                   {groupedTrade.trades.length} trade{groupedTrade.trades.length !== 1 ? 's' : ''}
@@ -1126,10 +1280,19 @@ export default function EnhancedTradeJournalPage() {
                           
                           <TableCell className="text-right">
                             <div>
-                              <div className="font-medium">{formatCurrency(groupedTrade.averageEntryPrice)}</div>
-                              {groupedTrade.averageExitPrice && (
+                              {/* Show entry/exit prices with multiplier for options */}
+                              <div className="font-medium">
+                                {groupedTrade.isOption
+                                  ? formatCurrency((groupedTrade.averageEntryPrice || 0) * 100)
+                                  : formatCurrency(groupedTrade.averageEntryPrice || 0)
+                                }
+                              </div>
+                              {groupedTrade.averageExitPrice !== undefined && (
                                 <div className="text-xs text-muted-foreground">
-                                  Exit: {formatCurrency(groupedTrade.averageExitPrice)}
+                                  Exit: {groupedTrade.isOption
+                                    ? formatCurrency(groupedTrade.averageExitPrice * 100)
+                                    : formatCurrency(groupedTrade.averageExitPrice)
+                                  }
                                 </div>
                               )}
                             </div>
@@ -1143,9 +1306,14 @@ export default function EnhancedTradeJournalPage() {
                             {groupedTrade.realizedPnL !== undefined ? (
                               <div className={groupedTrade.realizedPnL >= 0 ? 'text-green-600' : 'text-red-600'}>
                                 {formatCurrency(groupedTrade.realizedPnL)}
-                                {groupedTrade.averageEntryPrice && groupedTrade.averageExitPrice && (
+                                {(groupedTrade.status === 'closed' || groupedTrade.status === 'expired') && (
                                   <div className="text-xs">
-                                    {formatPercent(((groupedTrade.averageExitPrice - groupedTrade.averageEntryPrice) / groupedTrade.averageEntryPrice) * 100)}
+                                    {groupedTrade.averageEntryPrice === 0
+                                      ? '+100.00%' // For sell-to-open that expired (full profit)
+                                      : groupedTrade.averageExitPrice === undefined || groupedTrade.averageExitPrice === 0
+                                        ? '-100.00%' // For buy-to-open that expired (full loss)
+                                        : formatPercent(((groupedTrade.averageExitPrice - groupedTrade.averageEntryPrice) / groupedTrade.averageEntryPrice) * 100)
+                                    }
                                   </div>
                                 )}
                               </div>
@@ -1203,7 +1371,7 @@ export default function EnhancedTradeJournalPage() {
                             <TableCell className="pl-8">
                               <div className="text-sm">
                                 <div className="font-medium">
-                                  {format(trade.executedAt, 'MMM dd, HH:mm')}
+                                  {format(new Date(format(trade.executedAt, 'yyyy-MM-dd')), 'MMM dd, yyyy')}
                                 </div>
                                 <div className="text-xs text-muted-foreground">
                                   Trade #{index + 1}
@@ -1217,14 +1385,20 @@ export default function EnhancedTradeJournalPage() {
                               </span>
                             </TableCell>
                             
-                            <TableCell>
-                              <Badge 
-                                variant="outline" 
-                                className={trade.action === 'BUY' ? 'border-green-200 text-green-700' : 'border-red-200 text-red-700'}
-                              >
-                                {trade.action}
-                              </Badge>
-                            </TableCell>
+                              <TableCell>
+                                <Badge 
+                                  variant="outline" 
+                                  className={
+                                    trade.price === 0 || trade.status === 'expired'
+                                      ? 'border-gray-400 text-gray-700'
+                                      : trade.action === 'BUY'
+                                        ? 'border-green-200 text-green-700'
+                                        : 'border-red-200 text-red-700'
+                                  }
+                                >
+                                  {trade.price === 0 || trade.status === 'expired' ? 'EXP' : trade.action}
+                                </Badge>
+                              </TableCell>
                             
                             <TableCell className="text-sm text-muted-foreground">
                               Individual
@@ -1254,7 +1428,7 @@ export default function EnhancedTradeJournalPage() {
                             
                             <TableCell className="text-sm">
                               <Badge variant="outline">
-                                {trade.status}
+                                {groupedTrade.status}
                               </Badge>
                             </TableCell>
                             
@@ -1304,7 +1478,7 @@ export default function EnhancedTradeJournalPage() {
                       <div>
                         <span className="text-muted-foreground">Date:</span>{' '}
                         <span className="font-medium">
-                          {format(selectedTrade.executedAt, 'MMM dd, yyyy HH:mm')}
+                          {format(new Date(format(selectedTrade.executedAt, 'yyyy-MM-dd')), 'MMM dd, yyyy')}
                         </span>
                       </div>
                       <div>
@@ -1341,7 +1515,7 @@ export default function EnhancedTradeJournalPage() {
                           <div>
                             <span className="text-muted-foreground">Expiration:</span>{' '}
                             <span className="font-medium">
-                              {format(new Date(selectedTrade.optionDetails.expiration), 'MMM dd, yyyy')}
+                              {format(new Date(format(new Date(selectedTrade.optionDetails.expiration), 'yyyy-MM-dd')), 'MMM dd, yyyy')}
                             </span>
                           </div>
                         </>

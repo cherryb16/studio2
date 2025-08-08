@@ -13,7 +13,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Progress } from '@/components/ui/progress';
 import Link from 'next/link';
-import { BarChart3 } from 'lucide-react';
+// BarChart3 removed - Account Activities moved to sidebar
 
 // Dashboard components
 import MainValueCards from '@/components/dashboard/MainValueCards';
@@ -150,9 +150,7 @@ const DashboardPage = () => {
                   </option>
                 ))}
             </select>
-            <Link href="./advanced-analytics">
-              <Button variant="outline"><BarChart3 className="mr-2 h-4 w-4" />Advanced Analytics</Button>
-            </Link>
+            {/* Account Activities moved to sidebar navigation */}
           </div>
         </div>
 

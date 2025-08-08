@@ -190,7 +190,7 @@ export function SubscriptionManagement() {
                   <span>30 days</span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-muted-foreground">Advanced Analytics</span>
+                  <span className="text-muted-foreground">Account Activities</span>
                   <span>❌</span>
                 </div>
               </>

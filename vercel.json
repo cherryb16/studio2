@@ -3,5 +3,9 @@
     "src/app/api/**/*.ts": {
       "maxDuration": 30
     }
-  }
+  },
+  "crons": [{
+    "path": "/api/sync-trades",
+    "schedule": "0 0 * * *"
+  }]
 }

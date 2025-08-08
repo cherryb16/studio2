@@ -2,6 +2,7 @@
 'use server';
 
 import { snaptrade } from './snaptrade-client';
+import { format } from 'date-fns';
 
 export interface SnapTradeTrade {
   id: string;
@@ -114,9 +115,15 @@ export async function getSnapTradeTrades(
     }
 
     const allTrades: SnapTradeTrade[] = [];
+    const processedDates = new Set<string>(); // Track which dates we've processed to avoid duplicates
 
     // Paginated fetch with multiple requests to get all trades
     const fetchTradesWithPagination = async (currentEndDate?: Date): Promise<boolean> => {
+      const dateStr = currentEndDate ? format(currentEndDate, 'yyyy-MM-dd') : undefined;
+      if (dateStr && processedDates.has(dateStr)) {
+        console.log(`Skipping already processed date: ${dateStr}`);
+        return false;
+      }
       const attempts = [
         {
           name: 'All activities without type filter',
@@ -124,8 +131,8 @@ export async function getSnapTradeTrades(
             userId: snaptradeUserId,
             userSecret: userSecret,
             accounts: accountIds.join(','),
-            startDate: startDate?.toISOString().split('T')[0],
-            endDate: currentEndDate?.toISOString().split('T')[0] || endDate?.toISOString().split('T')[0],
+            startDate: startDate ? format(startDate, 'yyyy-MM-dd') : undefined,
+            endDate: dateStr || (endDate ? format(endDate, 'yyyy-MM-dd') : undefined),
           }
         },
         {
@@ -134,8 +141,8 @@ export async function getSnapTradeTrades(
             userId: snaptradeUserId,
             userSecret: userSecret,
             accounts: accountIds.join(','),
-            startDate: startDate?.toISOString().split('T')[0],
-            endDate: currentEndDate?.toISOString().split('T')[0] || endDate?.toISOString().split('T')[0],
+            startDate: startDate ? format(startDate, 'yyyy-MM-dd') : undefined,
+            endDate: dateStr || (endDate ? format(endDate, 'yyyy-MM-dd') : undefined),
             type: 'BUY,SELL,OPTIONEXPIRATION,OPTIONASSIGNMENT,OPTIONEXERCISE',
           }
         },
@@ -145,7 +152,7 @@ export async function getSnapTradeTrades(
             userId: snaptradeUserId,
             userSecret: userSecret,
             accounts: accountIds.join(','),
-            ...(currentEndDate && { endDate: currentEndDate.toISOString().split('T')[0] })
+            ...(dateStr && { endDate: dateStr })
           }
         }
       ];
@@ -176,7 +183,18 @@ export async function getSnapTradeTrades(
               : activitiesResponse.data;
               
             console.log(`Filtered to ${tradeActivities.length} trade activities`);
-            allTrades.push(...tradeActivities as SnapTradeTrade[]);
+
+            // Deduplicate trades based on ID
+            const existingTradeIds = new Set(allTrades.map(t => t.id));
+            for (const trade of tradeActivities) {
+              if (trade.id && !existingTradeIds.has(trade.id)) {
+                allTrades.push(trade as SnapTradeTrade);
+              }
+            }
+            
+            if (dateStr) {
+              processedDates.add(dateStr);
+            }
             
             // Return true if we got the maximum (1000) trades, indicating more pages might exist
             return activitiesResponse.data.length === 1000;
@@ -197,22 +215,24 @@ export async function getSnapTradeTrades(
     let hasMorePages = await fetchTradesWithPagination();
     let pageCount = 1;
     
-    // Continue fetching if we hit the 1000 transaction limit
-    while (hasMorePages && pageCount < 10) { // Safety limit of 10 pages (10,000 transactions)
+    // Continue fetching until we get all trades (no artificial limit)
+    while (hasMorePages) {
       pageCount++;
       
       // Sort current trades to get the oldest date for next pagination
-      allTrades.sort((a, b) => 
-        new Date(b.trade_date || '').getTime() - new Date(a.trade_date || '').getTime()
-      );
+      allTrades.sort((a, b) => {
+        const aDate = format(new Date(a.trade_date || ''), 'yyyy-MM-dd');
+        const bDate = format(new Date(b.trade_date || ''), 'yyyy-MM-dd');
+        return new Date(bDate).getTime() - new Date(aDate).getTime();
+      });
       
       if (allTrades.length === 0) break;
       
-      // Get the oldest trade date from current results
+      // Get the oldest trade date from current results, removing time component
       const oldestTrade = allTrades[allTrades.length - 1];
-      const oldestTradeDate = new Date(oldestTrade.trade_date || '');
+      const oldestTradeDate = new Date(format(new Date(oldestTrade.trade_date || ''), 'yyyy-MM-dd'));
       
-      console.log(`=== Fetching page ${pageCount} (trades before ${oldestTradeDate.toISOString().split('T')[0]}) ===`);
+      console.log(`=== Fetching page ${pageCount} (trades before ${format(oldestTradeDate, 'yyyy-MM-dd')}) ===`);
       
       // Subtract 1 day to avoid getting the same last transaction
       const nextEndDate = new Date(oldestTradeDate);
@@ -225,6 +245,9 @@ export async function getSnapTradeTrades(
       }
       
       hasMorePages = await fetchTradesWithPagination(nextEndDate);
+      
+      // Add a small delay between pages to avoid rate limits
+      await new Promise(resolve => setTimeout(resolve, 100));
     }
     
     console.log(`=== Pagination complete: ${pageCount} pages, ${allTrades.length} total trades ===`);
@@ -244,10 +267,12 @@ export async function getSnapTradeTrades(
     console.log('=== Final processing ===');
     console.log(`Total trades collected: ${allTrades.length}`);
 
-    // Sort by trade date, most recent first
-    allTrades.sort((a, b) => 
-      new Date(b.trade_date || '').getTime() - new Date(a.trade_date || '').getTime()
-    );
+    // Sort by trade date, most recent first, removing time component
+    allTrades.sort((a, b) => {
+      const aDate = format(new Date(a.trade_date || ''), 'yyyy-MM-dd');
+      const bDate = format(new Date(b.trade_date || ''), 'yyyy-MM-dd');
+      return new Date(bDate).getTime() - new Date(aDate).getTime();
+    });
 
     console.log('Returning trades:', allTrades.length > 0 ? 'SUCCESS' : 'EMPTY');
     console.log('=== End getSnapTradeTrades ===');
@@ -642,22 +667,71 @@ export async function getTradeSummaryStats(
         break;
     }
 
-    const trades = await getEnhancedTrades(
+    const allTrades = await getEnhancedTrades(
       snaptradeUserId,
       userSecret,
       startDate,
       endDate
     );
 
-    if ('error' in trades) {
-      return trades;
+    if ('error' in allTrades) {
+      return allTrades;
+    }
+
+    // Create a map to group trades by symbol
+    const tradesBySymbol = new Map<string, EnhancedTrade[]>();
+    for (const trade of allTrades) {
+      const key = trade.isOption ? 
+        `${trade.symbol}_${trade.optionDetails?.strike}_${trade.optionDetails?.expiration}_${trade.optionDetails?.type}` : 
+        trade.symbol;
+      
+      if (!tradesBySymbol.has(key)) {
+        tradesBySymbol.set(key, []);
+      }
+      tradesBySymbol.get(key)!.push(trade);
+    }
+    
+    // Count completed positions and their outcomes
+    let closedPositions = 0;
+    let winningPositions = 0;
+    let losingPositions = 0;
+    
+    for (const [, trades] of tradesBySymbol) {
+      // Sort trades by date
+      trades.sort((a, b) => a.executedAt.getTime() - b.executedAt.getTime());
+      
+      // Find completed positions (where all buys are matched with sells)
+      let buyUnits = 0;
+      let sellUnits = 0;
+      let totalPnL = 0;
+      
+      for (const trade of trades) {
+        if (trade.action === 'BUY') {
+          buyUnits += trade.units;
+        } else if (trade.action === 'SELL' || trade.status === 'expired') {
+          sellUnits += trade.units;
+          if (trade.realizedPnL) {
+            totalPnL += trade.realizedPnL;
+          }
+        }
+      }
+      
+      // If units match up, it's a completed position
+      if (buyUnits > 0 && buyUnits === sellUnits) {
+        closedPositions++;
+        if (totalPnL > 0) {
+          winningPositions++;
+        } else if (totalPnL < 0) {
+          losingPositions++;
+        }
+      }
     }
 
     const stats = {
-      totalTrades: trades.length,
-      closedTrades: trades.filter(t => t.status === 'closed').length,
-      winningTrades: trades.filter(t => t.realizedPnL && t.realizedPnL > 0).length,
-      losingTrades: trades.filter(t => t.realizedPnL && t.realizedPnL < 0).length,
+      totalTrades: allTrades.length,
+      closedTrades: closedPositions,
+      winningTrades: winningPositions,
+      losingTrades: losingPositions,
       totalRealizedPnL: 0,
       totalFees: 0,
       winRate: 0,
@@ -673,7 +747,7 @@ export async function getTradeSummaryStats(
     let totalWins = 0;
     let totalLosses = 0;
 
-    for (const trade of trades) {
+    for (const trade of allTrades) {
       stats.totalFees += trade.fee;
       
       // Count trades by symbol
@@ -686,37 +760,43 @@ export async function getTradeSummaryStats(
       stats.tradesByDay.set(dayKey, dayCount + 1);
       
       if (trade.realizedPnL !== undefined) {
-        stats.totalRealizedPnL += trade.realizedPnL;
+        // Round realizedPnL to 2 decimal places
+        const roundedPnL = Math.round(trade.realizedPnL * 100) / 100;
+        stats.totalRealizedPnL += roundedPnL;
         
-        if (trade.realizedPnL > 0) {
-          totalWins += trade.realizedPnL;
-          if (trade.realizedPnL > stats.largestWin.amount) {
-            stats.largestWin = { trade, amount: trade.realizedPnL };
+        if (roundedPnL > 0) {
+          totalWins += roundedPnL;
+          if (roundedPnL > stats.largestWin.amount) {
+            stats.largestWin = { trade, amount: roundedPnL };
           }
-        } else if (trade.realizedPnL < 0) {
-          totalLosses += Math.abs(trade.realizedPnL);
-          if (Math.abs(trade.realizedPnL) > Math.abs(stats.largestLoss.amount)) {
-            stats.largestLoss = { trade, amount: trade.realizedPnL };
+        } else if (roundedPnL < 0) {
+          totalLosses += Math.abs(roundedPnL);
+          if (Math.abs(roundedPnL) > Math.abs(stats.largestLoss.amount)) {
+            stats.largestLoss = { trade, amount: roundedPnL };
           }
         }
       }
     }
 
+    // Round totalRealizedPnL to 2 decimal places
+    stats.totalRealizedPnL = Math.round(stats.totalRealizedPnL * 100) / 100;
+
     // Calculate derived stats
     if (stats.closedTrades > 0) {
-      stats.winRate = (stats.winningTrades / stats.closedTrades) * 100;
+      // Round win rate to 1 decimal place
+      stats.winRate = Math.round((stats.winningTrades / stats.closedTrades) * 1000) / 10;
     }
     
     if (stats.winningTrades > 0) {
-      stats.avgWin = totalWins / stats.winningTrades;
+      stats.avgWin = Math.round((totalWins / stats.winningTrades) * 100) / 100;
     }
     
     if (stats.losingTrades > 0) {
-      stats.avgLoss = totalLosses / stats.losingTrades;
+      stats.avgLoss = Math.round((totalLosses / stats.losingTrades) * 100) / 100;
     }
     
     if (totalLosses > 0) {
-      stats.profitFactor = totalWins / totalLosses;
+      stats.profitFactor = Math.round((totalWins / totalLosses) * 100) / 100;
     }
 
     return stats;
