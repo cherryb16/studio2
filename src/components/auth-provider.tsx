@@ -25,6 +25,7 @@ export interface AuthContextType {
   logOut: () => Promise<void>;
   showOnboarding: boolean;
   completeOnboarding: () => void;
+  experienceLevel: string | null;
 }
 
 export const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -68,7 +69,7 @@ async function checkUserOnboardingViaAPI(uid: string) {
     
     if (!response.ok) {
       console.log("API request failed, assuming new user");
-      return { exists: false, onboardingCompleted: false };
+      return { exists: false, onboardingCompleted: false, experienceLevel: null };
     }
     
     const data = await response.json();
@@ -77,7 +78,7 @@ async function checkUserOnboardingViaAPI(uid: string) {
   } catch (error) {
     console.error("Error checking onboarding status:", error);
     // Assume new user if we can't check
-    return { exists: false, onboardingCompleted: false };
+    return { exists: false, onboardingCompleted: false, experienceLevel: null };
   }
 }
 
@@ -85,6 +86,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
   const [showOnboarding, setShowOnboarding] = useState(false);
+  const [experienceLevel, setExperienceLevel] = useState<string | null>(null);
   const router = useRouter();
   const pathname = usePathname();
 
@@ -102,6 +104,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         
         // Check onboarding status via API
         const onboardingStatus = await checkUserOnboardingViaAPI(result.user.uid);
+        setExperienceLevel(onboardingStatus.experienceLevel ?? null);
         
         if (!onboardingStatus.exists) {
           console.log("New Google user - creating profile and showing onboarding");
@@ -164,6 +167,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         // Always show onboarding for new email/password users
         console.log("Showing onboarding for new signup user");
         setShowOnboarding(true);
+        setExperienceLevel(null);
       }
       
       return userCredential;
@@ -174,6 +178,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const logOut = async () => {
+    setExperienceLevel(null);
     await signOut(auth);
     router.push('/login');
   };
@@ -205,6 +210,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           try {
             const onboardingStatus = await checkUserOnboardingViaAPI(currentUser.uid);
             console.log('User onboarding status:', onboardingStatus);
+            setExperienceLevel(onboardingStatus.experienceLevel ?? null);
             
             if (!onboardingStatus.onboardingCompleted) {
               console.log('Showing onboarding for existing user');
@@ -260,6 +266,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     signUp,
     logOut,
     showOnboarding,
+    experienceLevel,
     completeOnboarding,
   };
 

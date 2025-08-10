@@ -20,10 +20,26 @@ export async function GET(request: Request) {
 
     if (userDoc.exists) {
       const userData = userDoc.data();
+      // Attempt to fetch the onboarding profile to extract the experience level
+      let experienceLevel: string | null = null;
+      try {
+        // In the Firestore schema, the onboarding profile is stored under the information subcollection
+        const onboardingDocRef = userRef.collection('information').doc('onboarding_profile');
+        const onboardingDoc = await onboardingDocRef.get();
+        if (onboardingDoc.exists) {
+          const profileData = onboardingDoc.data();
+          const answers: any = profileData?.answers ?? {};
+          // Experience level can be stored under the camelCase or snake_case key
+          experienceLevel = answers.selfRatedSkill ?? answers.self_rated_skill ?? null;
+        }
+      } catch (e) {
+        console.error('Error fetching onboarding profile:', e);
+      }
       return new Response(
         JSON.stringify({
           exists: true,
           onboardingCompleted: userData?.onboardingCompleted || false,
+          experienceLevel,
         }),
         { status: 200 }
       );
@@ -32,6 +48,7 @@ export async function GET(request: Request) {
         JSON.stringify({
           exists: false,
           onboardingCompleted: false,
+          experienceLevel: null,
         }),
         { status: 200 }
       );
