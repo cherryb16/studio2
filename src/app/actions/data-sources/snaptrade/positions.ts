@@ -64,6 +64,9 @@ export async function getUserHoldings(
         userSecret: userSecret,
       });
 
+      console.log(`Found ${accountsResponse.data.length} SnapTrade accounts:`, 
+        accountsResponse.data.map(acc => ({ id: acc.id, name: acc.name, institution: acc.institution_name })));
+
       const allHoldings = {
         account: null,
         balances: [] as any[],
@@ -76,6 +79,7 @@ export async function getUserHoldings(
       let totalValue = 0;
 
       for (const account of accountsResponse.data) {
+        console.log(`Fetching holdings for account: ${account.name} (${account.id})`);
         const holdingsResponse = await snaptrade.accountInformation.getUserHoldings({
           userId: snaptradeUserId,
           userSecret: userSecret,
@@ -84,11 +88,19 @@ export async function getUserHoldings(
 
         if (holdingsResponse.data) {
           const holdings = holdingsResponse.data;
+          console.log(`Account ${account.name}: ${holdings.positions?.length || 0} positions, ${holdings.option_positions?.length || 0} option positions`);
+          
+          // Add account ID to each position for proper tracking
+          const positionsWithAccount = (holdings.positions || []).map(pos => ({ ...pos, account }));
+          const optionPositionsWithAccount = (holdings.option_positions || []).map(pos => ({ ...pos, account }));
+          
           allHoldings.balances = allHoldings.balances.concat(holdings.balances || []);
-          allHoldings.positions = allHoldings.positions.concat(holdings.positions || []);
-          allHoldings.option_positions = allHoldings.option_positions.concat(holdings.option_positions || []);
+          allHoldings.positions = allHoldings.positions.concat(positionsWithAccount);
+          allHoldings.option_positions = allHoldings.option_positions.concat(optionPositionsWithAccount);
           allHoldings.orders = allHoldings.orders.concat(holdings.orders || []);
           totalValue += holdings.total_value?.value || 0;
+        } else {
+          console.log(`No data returned for account ${account.name} (${account.id})`);
         }
       }
 

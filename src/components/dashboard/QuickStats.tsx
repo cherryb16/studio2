@@ -2,8 +2,12 @@
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { Skeleton } from '@/components/ui/skeleton';
+import { useAnalytics } from '@/hooks/use-firestore-portfolio';
 
-export default function QuickStats({ analyticsData, riskData }: any) {
+export default function QuickStats() {
+  const analytics = useAnalytics();
+
   return (
     <Card className="col-span-3">
       <CardHeader>
@@ -14,25 +18,31 @@ export default function QuickStats({ analyticsData, riskData }: any) {
         <div className="flex justify-between items-center">
           <span className="text-sm">Total Positions</span>
           <Badge variant="secondary">
-            {analyticsData?.diversification?.totalPositions || 0}
+            {analytics.totalPositions || 0}
           </Badge>
         </div>
         <div className="flex justify-between items-center">
           <span className="text-sm">Asset Classes</span>
           <Badge variant="secondary">
-            {analyticsData?.diversification?.assetClasses || 0}
+            {Object.keys(analytics.positionsByType).length || 0}
           </Badge>
         </div>
         <div className="flex justify-between items-center">
-          <span className="text-sm">Avg Position Size</span>
+          <span className="text-sm">Total Value</span>
           <Badge variant="secondary">
-            ${analyticsData?.diversification?.averagePositionSize?.toLocaleString() || 0}
+            ${analytics.totalValue?.toLocaleString() || 0}
           </Badge>
         </div>
         <div className="flex justify-between items-center">
-          <span className="text-sm">Diversification Score</span>
+          <span className="text-sm">Unrealized P&L</span>
+          <Badge variant={analytics.totalUnrealizedPnL >= 0 ? "secondary" : "destructive"}>
+            ${analytics.totalUnrealizedPnL?.toLocaleString() || 0}
+          </Badge>
+        </div>
+        <div className="flex justify-between items-center">
+          <span className="text-sm">Win Rate (Month)</span>
           <Badge variant="secondary">
-            {riskData?.riskSummary?.diversificationScore || 'N/A'}/10
+            {analytics.thisMonth?.winRate?.toFixed(1) || 'N/A'}%
           </Badge>
         </div>
       </CardContent>

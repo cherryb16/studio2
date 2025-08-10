@@ -1,10 +1,53 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Allow users to read and write their own user data
-    match /snaptrade_users/{userId} {
-      allow read, write: if request.auth != null && request.auth.uid == userId;
+    
+    // Helper functions
+    function isAuthenticated() {
+      return request.auth != null;
     }
+    
+    function isOwner(userId) {
+      return request.auth.uid == userId;
+    }
+
+    // ==================== SNAPTRADE USER DATA ====================
+    
+    // Main snaptrade_users collection with subcollections
+    match /snaptrade_users/{userId} {
+      allow read, write: if isAuthenticated() && isOwner(userId);
+      
+      // Trades subcollection
+      match /trades/{tradeId} {
+        allow read, write: if isAuthenticated() && isOwner(userId);
+      }
+      
+      // Positions subcollections
+      match /positions_options/{positionId} {
+        allow read, write: if isAuthenticated() && isOwner(userId);
+      }
+      
+      match /positions_equities/{positionId} {
+        allow read, write: if isAuthenticated() && isOwner(userId);
+      }
+      
+      // Metrics subcollection
+      match /metrics/{metricId} {
+        allow read, write: if isAuthenticated() && isOwner(userId);
+      }
+      
+      // Information subcollection
+      match /information/{infoId} {
+        allow read, write: if isAuthenticated() && isOwner(userId);
+      }
+    }
+    
+    // Users collection
+    match /users/{userId} {
+      allow read, write: if isAuthenticated() && isOwner(userId);
+    }
+    
+    // ==================== STRIPE COLLECTIONS ====================
     
     // Stripe customer data - users can only access their own
     match /customers/{uid} {
@@ -33,6 +76,11 @@ service cloud.firestore {
       match /prices/{id} {
         allow read: if true;
       }
+    }
+
+    // ==================== DENY ALL OTHER ACCESS ====================
+    match /{document=**} {
+      allow read, write: if false;
     }
   }
 }

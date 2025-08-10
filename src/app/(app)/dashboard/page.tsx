@@ -20,6 +20,7 @@ import MainValueCards from '@/components/dashboard/MainValueCards';
 import AssetAllocation from '@/components/dashboard/AssetAllocation';
 import QuickStats from '@/components/dashboard/QuickStats';
 import TopPositions from '@/components/dashboard/TopPositions';
+import SyncButton from '@/components/sync-button';
 // SectorAllocation removed - no longer using external sector data
 import RiskSummary from '@/components/dashboard/RiskSummary';
 import TaxOptimization from '@/components/dashboard/TaxOptimization';
@@ -30,7 +31,6 @@ import PerformanceChart from '@/components/dashboard/PerformanceChart';
 
 import { getSnapTradeAccounts } from '@/app/actions/snaptrade';
 import { getPortfolioAnalytics, getPerformanceMetrics, getRealizedGains } from '@/app/actions/snaptrade-enhanced';
-import { generateRiskDashboard } from '@/app/actions/advanced-analytics';
 
 const DashboardPage = () => {
   const { user, loading: authLoading } = useAuth();
@@ -65,18 +65,7 @@ const DashboardPage = () => {
     enabled,
   });
 
-  const { data: riskDashboard, isLoading: riskLoading, error: riskError } = useQuery({
-    queryKey: ['risk', snaptradeUserId, userSecret],
-    queryFn: async () => {
-      console.log('Fetching risk dashboard data...');
-      const result = await generateRiskDashboard(snaptradeUserId!, userSecret!, 'moderate');
-      console.log('Risk dashboard result:', result);
-      return result;
-    },
-    enabled,
-    retry: 1,
-    staleTime: 5 * 60 * 1000, // 5 minutes
-  });
+  // Risk dashboard removed for performance
 
   const { data: performanceMetrics, isLoading: performanceLoading, error: performanceError } = useQuery({
     queryKey: ['performanceMetrics', snaptradeUserId, userSecret],
@@ -119,7 +108,6 @@ const DashboardPage = () => {
   const isError = (d: any): d is { error: string } => d && typeof d === 'object' && 'error' in d;
   const accountList = isError(accounts) ? [] : accounts || [];
   const analyticsData = isError(analytics) ? null : analytics;
-  const riskData = isError(riskDashboard) ? null : riskDashboard;
   const performanceData = isError(performanceMetrics) ? null : performanceMetrics;
   const realizedGainsData = isError(realizedGains) ? null : realizedGains;
 
@@ -133,6 +121,7 @@ const DashboardPage = () => {
             <p className="text-muted">{user.displayName || user.email}</p>
           </div>
           <div className="flex items-center gap-4">
+            <SyncButton />
             <label htmlFor="accountSelect" className="sr-only">Select Account</label>
             <select
               id="accountSelect"
@@ -156,7 +145,7 @@ const DashboardPage = () => {
 
         <MainValueCards
           analyticsData={analyticsData}
-          riskData={riskData}
+          riskData={null}
           performanceData={performanceData}
           realizedGainsData={realizedGainsData}
         />
@@ -175,35 +164,27 @@ const DashboardPage = () => {
                 <AssetAllocation />
               </div>
               <div>
-                <QuickStats analyticsData={analyticsData} riskData={riskData} />
+                <QuickStats />
               </div>
             </div>
           </TabsContent>
 
           {/* Positions */}
           <TabsContent value="positions">
-            <TopPositions analyticsData={analyticsData} />
+            <TopPositions />
             {/* SectorAllocation component removed - no longer using external sector data */}
           </TabsContent>
 
           {/* Risk */}
           <TabsContent value="risk">
             <PaywallWrapper requiredPlan="pro" feature="Risk Analysis" description="Advanced risk metrics and tax optimization strategies to help improve your portfolio performance.">
-              {riskLoading ? (
-                <div className="grid md:grid-cols-2 gap-4">
-                  <Card><CardContent className="p-6"><div className="animate-pulse"><div className="h-4 bg-gray-200 rounded w-3/4 mb-2"></div><div className="h-4 bg-gray-200 rounded w-1/2"></div></div></CardContent></Card>
-                  <Card><CardContent className="p-6"><div className="animate-pulse"><div className="h-4 bg-gray-200 rounded w-3/4 mb-2"></div><div className="h-4 bg-gray-200 rounded w-1/2"></div></div></CardContent></Card>
-                </div>
-              ) : riskError ? (
-                <Card><CardContent className="p-6 text-center text-red-600">Error loading risk data: {riskError.message}</CardContent></Card>
-              ) : riskData ? (
-                <div className="grid md:grid-cols-2 gap-4">
-                  <RiskSummary riskData={riskData} />
-                  <TaxOptimization riskData={riskData} />
-                </div>
-              ) : (
-                <Card><CardContent className="p-6 text-center text-muted-foreground">No risk data available. Please ensure you have positions in your connected accounts.</CardContent></Card>
-              )}
+              <Card>
+                <CardContent className="p-6 text-center text-muted-foreground">
+                  Risk analysis temporarily disabled for performance optimization. 
+                  <br />
+                  Coming back soon with improved speed!
+                </CardContent>
+              </Card>
             </PaywallWrapper>
           </TabsContent>
 
@@ -217,9 +198,6 @@ const DashboardPage = () => {
               <>
                 <PerformanceSummary performanceData={performanceData} />
                 <PaywallWrapper requiredPlan="pro" feature="Performance Attribution" description="Detailed performance breakdown and attribution analysis to understand what drives your returns.">
-                  {riskData?.performanceAttribution && (
-                    <PerformanceAttribution performanceAttribution={riskData.performanceAttribution} />
-                  )}
                   {/* Pass performanceData to the chart */}
                   {performanceData && !('error' in performanceData) && (
                     <PerformanceChart performanceData={{

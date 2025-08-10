@@ -6,10 +6,16 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
-import { Loader2, X } from 'lucide-react';
+import { Loader2, X, ChevronRight, ChevronLeft } from 'lucide-react';
 import { useAuth } from '@/hooks/use-auth';
+import { 
+  OnboardingAnswers, 
+  OnboardingFlow, 
+  OnboardingService,
+  ONBOARDING_QUESTIONS 
+} from '@/lib/onboarding-schema';
 
 interface OnboardingFormProps {
   onComplete: () => void;
@@ -17,101 +23,48 @@ interface OnboardingFormProps {
 }
 
 export function OnboardingForm({ onComplete, onSkip }: OnboardingFormProps) {
-  const [tradingExperience, setTradingExperience] = useState<string>("");
-  const [tradeTypes, setTradeTypes] = useState<string[]>([]);
-  const [tradingDurations, setTradingDurations] = useState<Record<string, string>>({});
-  const [startMonth, setStartMonth] = useState<string>("");
-  const [startYear, setStartYear] = useState<string>("");
+  const [currentStep, setCurrentStep] = useState(0);
+  const [answers, setAnswers] = useState<Partial<OnboardingAnswers>>({});
   const [loading, setLoading] = useState(false);
   const { toast } = useToast();
   const { user } = useAuth();
 
-  const tradeTypeOptions = [
-    { id: 'stocks', label: 'Stocks/Equities' },
-    { id: 'options', label: 'Options' },
-    { id: 'forex', label: 'Forex/FX' },
-    { id: 'crypto', label: 'Cryptocurrency' },
-    { id: 'futures', label: 'Futures' },
-    { id: 'etfs', label: 'ETFs' },
-    { id: 'bonds', label: 'Bonds' },
-    { id: 'commodities', label: 'Commodities' }
-  ];
+  // Get current step questions using step-based navigation
+  const currentQuestions = OnboardingFlow.getQuestionsForStep(currentStep, answers);
+  const totalSteps = OnboardingFlow.getTotalSteps(answers);
+  const isComplete = currentStep >= totalSteps;
 
-  const durationOptions = [
-    { value: 'less-than-6m', label: 'Less than 6 months' },
-    { value: '6m-1y', label: '6 months - 1 year' },
-    { value: '1-2y', label: '1-2 years' },
-    { value: '2-3y', label: '2-3 years' },
-    { value: '3-5y', label: '3-5 years' },
-    { value: 'more-than-5y', label: 'More than 5 years' }
-  ];
-
-  const months = [
-    'January', 'February', 'March', 'April', 'May', 'June',
-    'July', 'August', 'September', 'October', 'November', 'December'
-  ];
-
-  const currentYear = new Date().getFullYear();
-  const years = Array.from({ length: 50 }, (_, i) => currentYear - i);
-
-  const handleTradeTypeChange = (tradeType: string, checked: boolean) => {
-    if (checked) {
-      setTradeTypes(prev => [...prev, tradeType]);
-    } else {
-      setTradeTypes(prev => prev.filter(type => type !== tradeType));
-      setTradingDurations(prev => {
-        const newDurations = { ...prev };
-        delete newDurations[tradeType];
-        return newDurations;
-      });
-    }
-  };
-
-  const handleDurationChange = (tradeType: string, duration: string) => {
-    setTradingDurations(prev => ({
+  const handleAnswerChange = (questionId: string, value: any) => {
+    setAnswers(prev => ({
       ...prev,
-      [tradeType]: duration
+      [questionId]: value
     }));
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    
-    if (!tradingExperience) {
-      toast({
-        title: "Please select your overall trading experience",
-        variant: "destructive",
-      });
-      return;
-    }
-
-    if (tradeTypes.length === 0) {
-      toast({
-        title: "Please select at least one type of trading",
-        variant: "destructive",
-      });
-      return;
-    }
-
-    // Check if all selected trade types have duration specified
-    for (const tradeType of tradeTypes) {
-      if (!tradingDurations[tradeType]) {
-        toast({
-          title: "Please specify duration for all selected trade types",
-          variant: "destructive",
-        });
-        return;
+  const handleArrayAnswerChange = (questionId: keyof OnboardingAnswers, optionValue: string, checked: boolean) => {
+    setAnswers(prev => {
+      const currentArray = (prev as any)[questionId] as string[] || [];
+      if (checked) {
+        return { ...prev, [questionId]: [...currentArray, optionValue] };
+      } else {
+        return { ...prev, [questionId]: currentArray.filter(item => item !== optionValue) };
       }
-    }
+    });
+  };
 
-    if (!startMonth || !startYear) {
-      toast({
-        title: "Please specify when you started trading",
-        variant: "destructive",
-      });
-      return;
+  const handleNext = () => {
+    if (currentStep < totalSteps) {
+      setCurrentStep(prev => prev + 1);
     }
+  };
 
+  const handleBack = () => {
+    if (currentStep > 0) {
+      setCurrentStep(prev => prev - 1);
+    }
+  };
+
+  const handleSubmit = async () => {
     if (!user) {
       toast({
         title: "Error",
@@ -124,35 +77,30 @@ export function OnboardingForm({ onComplete, onSkip }: OnboardingFormProps) {
     setLoading(true);
 
     try {
-      // Update the user's comprehensive profile in Firestore
-      const response = await fetch('/api/firebase/updateUserProfile', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          firebaseUserId: user.uid,
-          tradingExperience,
-          tradeTypes,
-          tradingDurations,
-          startMonth,
-          startYear,
-          tradingStartDate: `${startMonth} ${startYear}`
-        }),
+      // Create complete user profile with scoring and personalized advice
+      const completeAnswers = {
+        ...answers,
+        completedAt: new Date(),
+        version: '1.0'
+      } as OnboardingAnswers;
+
+      const userProfile = OnboardingFlow.createUserProfile(completeAnswers);
+      
+      // Save to Firestore
+      await OnboardingService.saveUserProfile(user.uid, userProfile);
+
+      // Show personalized welcome message
+      toast({
+        title: 'Welcome to Trade Insights Pro!',
+        description: userProfile.personalizedAdvice.welcomeMessage,
       });
 
-      if (response.ok) {
-        toast({
-          title: "Profile updated successfully!",
-          description: "Now let's connect your brokerage account.",
-        });
-        onComplete();
-      } else {
-        throw new Error('Failed to update profile');
-      }
+      onComplete();
     } catch (error) {
-      console.error('Error updating user profile:', error);
+      console.error('Error saving onboarding profile:', error);
       toast({
         title: "Error",
-        description: "Failed to update your profile. Please try again.",
+        description: "Failed to save your profile. Please try again.",
         variant: "destructive",
       });
     } finally {
@@ -160,9 +108,122 @@ export function OnboardingForm({ onComplete, onSkip }: OnboardingFormProps) {
     }
   };
 
+  const renderQuestion = (question: any) => {
+    const answerValue = (answers as any)[question.id];
+
+    switch (question.type) {
+      case 'radio':
+        return (
+          <div className="space-y-3">
+            <Label className="text-base font-medium">{question.question}</Label>
+            <RadioGroup
+              value={answerValue || ""}
+              onValueChange={(value) => handleAnswerChange(question.id, value)}
+              className="space-y-2"
+            >
+              {question.options.map((option: any) => (
+                <div key={option.value} className="flex items-center space-x-2">
+                  <RadioGroupItem value={option.value} id={option.value} />
+                  <Label htmlFor={option.value} className="cursor-pointer">
+                    {option.label}
+                  </Label>
+                </div>
+              ))}
+            </RadioGroup>
+          </div>
+        );
+
+      case 'checkbox':
+        return (
+          <div className="space-y-4">
+            <Label className="text-base font-medium">{question.question}</Label>
+            <div className="grid grid-cols-1 gap-3">
+              {question.options.map((option: any) => {
+                const isChecked = (answerValue as string[] || []).includes(option.value);
+                return (
+                  <div key={option.value} className="flex items-center space-x-2">
+                    <Checkbox
+                      id={option.value}
+                      checked={isChecked}
+                      onCheckedChange={(checked) => 
+                        handleArrayAnswerChange(question.id, option.value, !!checked)
+                      }
+                    />
+                    <Label htmlFor={option.value} className="cursor-pointer text-sm">
+                      {option.label}
+                    </Label>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        );
+
+      case 'textarea':
+        return (
+          <div className="space-y-3">
+            <Label className="text-base font-medium">{question.question}</Label>
+            <Textarea
+              value={answerValue || ""}
+              onChange={(e) => handleAnswerChange(question.id, e.target.value)}
+              placeholder={question.placeholder || ""}
+              rows={4}
+              className="resize-none"
+            />
+          </div>
+        );
+
+      default:
+        return null;
+    }
+  };
+
+  // Calculate current progress
+  const getProgress = () => {
+    return Math.min((currentStep + 1) / totalSteps * 100, 100);
+  };
+
+  const getStepTitle = () => {
+    switch (currentStep) {
+      case 0: return "Basic Profile";
+      case 1: 
+        return answers.selfRatedSkill && ['intermediate', 'advanced', 'expert'].includes(answers.selfRatedSkill) 
+          ? "Strategy & Knowledge" 
+          : "Risk Management";
+      case 2:
+        return answers.selfRatedSkill && ['intermediate', 'advanced', 'expert'].includes(answers.selfRatedSkill)
+          ? "Risk Management"
+          : "Goals & Objectives";
+      case 3: 
+        return answers.selfRatedSkill && ['intermediate', 'advanced', 'expert'].includes(answers.selfRatedSkill)
+          ? "Goals & Objectives"
+          : "Current Challenges";
+      case 4: return "Current Challenges";
+      default: return "Complete";
+    }
+  };
+
+  const canProceed = () => {
+    if (currentQuestions.length === 0) return true; // All done
+    
+    // Check if required questions are answered
+    return currentQuestions.every(q => {
+      if (!q.required) return true;
+      const answer = (answers as any)[q.id];
+      if (q.type === 'checkbox') {
+        return Array.isArray(answer) && answer.length > 0;
+      }
+      return answer !== undefined && answer !== '';
+    });
+  };
+
+  const isLastStep = () => {
+    return currentStep === totalSteps - 1;
+  };
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 p-4">
-      <Card className="w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+      <Card className="w-full max-w-3xl max-h-[90vh] overflow-y-auto">
         <CardHeader className="text-center relative">
           {onSkip && (
             <Button
@@ -174,178 +235,122 @@ export function OnboardingForm({ onComplete, onSkip }: OnboardingFormProps) {
               <X className="h-4 w-4" />
             </Button>
           )}
-          <CardTitle>Welcome to Trade Insights Pro!</CardTitle>
+          <CardTitle>Options Trading Profile Setup</CardTitle>
           <CardDescription>
-            Let's set up your profile to provide personalized trading analytics.
+            Help us customize Trade Insights Pro for your trading style - we'll use this to personalize your experience
           </CardDescription>
+          
+          {/* Progress bar */}
+          <div className="mt-4">
+            <div className="flex justify-between text-sm text-muted-foreground mb-2">
+              <span>{getStepTitle()}</span>
+              <span>{Math.round(getProgress())}% Complete</span>
+            </div>
+            <div className="w-full bg-gray-200 rounded-full h-2">
+              <div 
+                className="bg-blue-600 h-2 rounded-full transition-all duration-300"
+                style={{ width: `${getProgress()}%` }}
+              />
+            </div>
+          </div>
         </CardHeader>
+
         <CardContent>
-          <form onSubmit={handleSubmit} className="space-y-8">
-            {/* Overall Experience Level */}
-            <div className="space-y-3">
-              <Label className="text-base font-medium">
-                What's your overall trading experience level?
-              </Label>
-              <RadioGroup
-                value={tradingExperience}
-                onValueChange={setTradingExperience}
-                className="space-y-2"
-              >
-                <div className="flex items-center space-x-2">
-                  <RadioGroupItem value="beginner" id="beginner" />
-                  <Label htmlFor="beginner" className="cursor-pointer">
-                    Beginner (0-1 years)
-                  </Label>
+          {!isComplete ? (
+            <div className="space-y-6">
+              {/* Render current step questions */}
+              {currentQuestions.map((question) => (
+                <div key={question.id}>
+                  {renderQuestion(question)}
                 </div>
-                <div className="flex items-center space-x-2">
-                  <RadioGroupItem value="intermediate" id="intermediate" />
-                  <Label htmlFor="intermediate" className="cursor-pointer">
-                    Intermediate (1-3 years)
-                  </Label>
-                </div>
-                <div className="flex items-center space-x-2">
-                  <RadioGroupItem value="advanced" id="advanced" />
-                  <Label htmlFor="advanced" className="cursor-pointer">
-                    Advanced (3-5 years)
-                  </Label>
-                </div>
-                <div className="flex items-center space-x-2">
-                  <RadioGroupItem value="expert" id="expert" />
-                  <Label htmlFor="expert" className="cursor-pointer">
-                    Expert (5+ years)
-                  </Label>
-                </div>
-              </RadioGroup>
-            </div>
+              ))}
 
-            {/* Trade Types */}
-            <div className="space-y-4">
-              <Label className="text-base font-medium">
-                What types of trading do you do? (Select all that apply)
-              </Label>
-              <div className="grid grid-cols-2 gap-3">
-                {tradeTypeOptions.map((option) => (
-                  <div key={option.id} className="flex items-center space-x-2">
-                    <Checkbox
-                      id={option.id}
-                      checked={tradeTypes.includes(option.id)}
-                      onCheckedChange={(checked) => handleTradeTypeChange(option.id, !!checked)}
-                    />
-                    <Label htmlFor={option.id} className="cursor-pointer text-sm">
-                      {option.label}
-                    </Label>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* Duration for each trade type */}
-            {tradeTypes.length > 0 && (
-              <div className="space-y-4">
-                <Label className="text-base font-medium">
-                  How long have you been trading each type?
-                </Label>
-                <div className="space-y-3">
-                  {tradeTypes.map((tradeType) => {
-                    const tradeTypeLabel = tradeTypeOptions.find(opt => opt.id === tradeType)?.label;
-                    return (
-                      <div key={tradeType} className="flex items-center justify-between gap-4">
-                        <Label className="text-sm min-w-0 flex-shrink-0">
-                          {tradeTypeLabel}:
-                        </Label>
-                        <div className="flex-1 max-w-xs">
-                          <Select
-                            value={tradingDurations[tradeType] || ""}
-                            onValueChange={(value) => handleDurationChange(tradeType, value)}
-                          >
-                            <SelectTrigger>
-                              <SelectValue placeholder="Select duration" />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {durationOptions.map((option) => (
-                                <SelectItem key={option.value} value={option.value}>
-                                  {option.label}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-
-            {/* Start Date */}
-            <div className="space-y-4">
-              <Label className="text-base font-medium">
-                When did you start trading?
-              </Label>
-              <div className="flex gap-4">
-                <div className="flex-1">
-                  <Label htmlFor="start-month" className="text-sm text-muted-foreground">
-                    Month
-                  </Label>
-                  <Select value={startMonth} onValueChange={setStartMonth}>
-                    <SelectTrigger id="start-month">
-                      <SelectValue placeholder="Select month" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {months.map((month) => (
-                        <SelectItem key={month} value={month}>
-                          {month}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="flex-1">
-                  <Label htmlFor="start-year" className="text-sm text-muted-foreground">
-                    Year
-                  </Label>
-                  <Select value={startYear} onValueChange={setStartYear}>
-                    <SelectTrigger id="start-year">
-                      <SelectValue placeholder="Select year" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {years.map((year) => (
-                        <SelectItem key={year} value={year.toString()}>
-                          {year}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-            </div>
-
-            {/* Submit Buttons */}
-            <div className="space-y-3 pt-4">
-              <Button 
-                type="submit" 
-                className="w-full" 
-                disabled={loading || !tradingExperience || tradeTypes.length === 0}
-              >
-                {loading && (
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                )}
-                Continue to Brokerage Connection
-              </Button>
-              
-              {onSkip && (
-                <Button 
-                  type="button" 
-                  variant="outline" 
-                  className="w-full"
-                  onClick={onSkip}
-                  disabled={loading}
+              {/* Navigation buttons */}
+              <div className="flex justify-between pt-6">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={handleBack}
+                  disabled={currentStep === 0}
+                  className="flex items-center gap-2"
                 >
-                  Connect Brokerage Later
+                  <ChevronLeft className="w-4 h-4" />
+                  Back
                 </Button>
-              )}
+
+                {isLastStep() ? (
+                  <Button
+                    type="button"
+                    onClick={() => setCurrentStep(totalSteps)}
+                    disabled={!canProceed()}
+                    className="flex items-center gap-2"
+                  >
+                    Review & Complete
+                    <ChevronRight className="w-4 h-4" />
+                  </Button>
+                ) : (
+                  <Button
+                    type="button"
+                    onClick={handleNext}
+                    disabled={!canProceed()}
+                    className="flex items-center gap-2"
+                  >
+                    Next Step
+                    <ChevronRight className="w-4 h-4" />
+                  </Button>
+                )}
+              </div>
             </div>
-          </form>
+          ) : (
+            // Final step - show summary and complete
+            <div className="space-y-6 text-center">
+              <div className="space-y-4">
+                <h3 className="text-xl font-semibold">Profile Complete!</h3>
+                <p className="text-muted-foreground">
+                  Based on your answers, we'll provide personalized insights and recommendations 
+                  tailored to your trading style and goals.
+                </p>
+                
+                {/* Show preview of their profile */}
+                {(() => {
+                  const preview = OnboardingFlow.createUserProfile(answers as OnboardingAnswers);
+                  return (
+                    <div className="bg-blue-50 p-4 rounded-lg text-left">
+                      <h4 className="font-medium mb-2">Your Trading Profile:</h4>
+                      <ul className="text-sm space-y-1">
+                        <li>• Experience Level: <span className="font-medium capitalize">{preview.score.skillLevel}</span></li>
+                        <li>• Learning Track: <span className="font-medium capitalize">{preview.score.learningTrack}</span></li>
+                      </ul>
+                    </div>
+                  );
+                })()}
+              </div>
+
+              <div className="space-y-3">
+                <Button 
+                  onClick={handleSubmit} 
+                  className="w-full" 
+                  disabled={loading}
+                  size="lg"
+                >
+                  {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                  Complete Setup & Connect Brokerage
+                </Button>
+                
+                {onSkip && (
+                  <Button 
+                    type="button" 
+                    variant="outline" 
+                    className="w-full"
+                    onClick={onSkip}
+                    disabled={loading}
+                  >
+                    Skip Brokerage Connection
+                  </Button>
+                )}
+              </div>
+            </div>
+          )}
         </CardContent>
       </Card>
     </div>
