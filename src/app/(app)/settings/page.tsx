@@ -60,7 +60,8 @@ const SettingsPage = () => {
     
     setSyncLoading(true);
     try {
-      const response = await fetch('/api/sync-data', {
+      // Use the new BigQuery-powered refresh endpoint
+      const response = await fetch('/api/portfolio/refresh', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ userId: user.uid }),
@@ -68,12 +69,26 @@ const SettingsPage = () => {
       
       const result = await response.json();
       if (response.ok) {
-        // Show success message or refresh data
-        console.log('Sync completed:', result.message);
+        console.log('BigQuery sync completed:', result.message);
         // Optionally refresh the page or update the UI
         window.location.reload();
       } else {
-        console.error('Sync failed:', result.error);
+        console.error('BigQuery sync failed:', result.error);
+        // Fallback to old sync method if BigQuery fails
+        console.log('Falling back to Firestore sync...');
+        const fallbackResponse = await fetch('/api/sync-data', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ userId: user.uid }),
+        });
+        
+        const fallbackResult = await fallbackResponse.json();
+        if (fallbackResponse.ok) {
+          console.log('Firestore sync completed:', fallbackResult.message);
+          window.location.reload();
+        } else {
+          console.error('Both sync methods failed:', fallbackResult.error);
+        }
       }
     } catch (error) {
       console.error('Error syncing data:', error);
@@ -215,14 +230,14 @@ const SettingsPage = () => {
           {accounts.length > 0 && (
             <div className="pt-4 border-t">
               <p className="text-sm text-muted-foreground mb-2">
-                Sync your trading data to Firestore for faster performance
+                Sync your trading data to BigQuery for analytics and faster performance
               </p>
               <Button 
                 variant="secondary" 
                 onClick={handleSyncData}
                 disabled={syncLoading}
               >
-                {syncLoading ? 'Syncing...' : 'Sync Trading Data'}
+                {syncLoading ? 'Syncing to BigQuery...' : 'Sync Trading Data (BigQuery)'}
               </Button>
             </div>
           )}

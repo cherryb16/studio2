@@ -12,7 +12,7 @@ export async function testSnapTradeConnection(snaptradeUserId: string, userSecre
       userSecret: userSecret
     });
     
-    console.log('Accounts test result:', accountsResponse);
+    console.log(`Found ${accountsResponse.data?.length || 0} accounts`);
     
     if (!accountsResponse.data || accountsResponse.data.length === 0) {
       return {
@@ -32,7 +32,7 @@ export async function testSnapTradeConnection(snaptradeUserId: string, userSecre
       accountId: firstAccount.id
     });
     
-    console.log('Holdings test result:', holdingsResponse);
+    console.log(`Holdings test completed - found ${holdingsResponse.data?.positions?.length || 0} positions`);
     
     return {
       success: true,

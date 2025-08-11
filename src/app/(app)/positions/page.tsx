@@ -305,10 +305,8 @@ const PositionsPage = () => {
 
   const safePositions: Position[] = Array.isArray(holdingsData?.positions) ? holdingsData.positions : [];
   const safeOptionPositions = Array.isArray(holdingsData?.option_positions) ? holdingsData.option_positions : [];
-  // Debug logging for raw and safe positions
-  console.log('Raw holdings from query:', holdingsData);
-  console.log('SafePositions (equity):', safePositions);
-  console.log('SafeOptionPositions:', safeOptionPositions);
+  // Debug logging for safe positions count
+  console.log(`Holdings loaded: ${safePositions.length} equity positions, ${safeOptionPositions.length} option positions`);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [activeType, setActiveType] = useState<'equity' | 'option' | null>(null);
   

@@ -4,8 +4,14 @@
       "maxDuration": 30
     }
   },
-  "crons": [{
-    "path": "/api/sync-trades",
-    "schedule": "0 0 * * *"
-  }]
+  "crons": [
+    {
+      "path": "/api/sync-trades",
+      "schedule": "0 0 * * *"
+    },
+    {
+      "path": "/api/cron/daily-refresh",
+      "schedule": "0 0 * * *"
+    }
+  ]
 }
