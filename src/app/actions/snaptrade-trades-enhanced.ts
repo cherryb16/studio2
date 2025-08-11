@@ -268,29 +268,76 @@ export async function getEnhancedTradeActivities(
 
     const allActivities: EnhancedTradeActivity[] = [];
 
-    // Fetch trade activities using SnapTrade API
-    try {
-      console.log('=== Fetching TRADE activities ===');
-      const activitiesResponse = await snaptrade.transactionsAndReporting.getActivities({
-        userId: snaptradeUserId,
-        userSecret: userSecret,
-        accounts: accountIds.join(','),
-        startDate: startDate?.toISOString().split('T')[0],
-        endDate: endDate?.toISOString().split('T')[0],
-        type: 'BUY,SELL,OPTIONEXPIRATION,OPTIONASSIGNMENT,OPTIONEXERCISE', // Only trade-related activities
-      });
+    // Paginated fetch for trade activities to handle 1000+ trades
+    const fetchTradeActivitiesWithPagination = async (currentEndDate?: Date): Promise<boolean> => {
+      try {
+        console.log(`=== Fetching TRADE activities ${currentEndDate ? `(paginated, endDate: ${currentEndDate.toISOString().split('T')[0]})` : '(initial)'} ===`);
+        const activitiesResponse = await snaptrade.transactionsAndReporting.getActivities({
+          userId: snaptradeUserId,
+          userSecret: userSecret,
+          accounts: accountIds.join(','),
+          startDate: startDate?.toISOString().split('T')[0],
+          endDate: currentEndDate?.toISOString().split('T')[0] || endDate?.toISOString().split('T')[0],
+          type: 'BUY,SELL,OPTIONEXPIRATION,OPTIONASSIGNMENT,OPTIONEXERCISE', // Only trade-related activities
+        });
 
-      if (activitiesResponse.data && Array.isArray(activitiesResponse.data)) {
-        console.log(`✅ SUCCESS: Found ${activitiesResponse.data.length} trade activities`);
-        const enhancedTrades = activitiesResponse.data.map(convertToEnhancedTrade);
-        allActivities.push(...enhancedTrades);
-      } else {
-        console.warn('No trade activities found or invalid response format');
+        if (activitiesResponse.data && Array.isArray(activitiesResponse.data) && activitiesResponse.data.length > 0) {
+          console.log(`✅ SUCCESS: Found ${activitiesResponse.data.length} trade activities`);
+          
+          // Add activities, avoiding duplicates based on id
+          const existingIds = new Set(allActivities.map(a => a.id));
+          const newActivities = activitiesResponse.data.filter(activity => !existingIds.has(activity.id));
+          console.log(`Adding ${newActivities.length} new activities (${activitiesResponse.data.length - newActivities.length} duplicates filtered)`);
+          
+          const enhancedTrades = newActivities.map(convertToEnhancedTrade);
+          allActivities.push(...enhancedTrades);
+          
+          // Return true if we got the maximum (1000) activities, indicating more pages might exist
+          return activitiesResponse.data.length === 1000;
+        } else {
+          console.log('No more trade activities found');
+          return false;
+        }
+      } catch (error) {
+        console.error('Error fetching trade activities from SnapTrade API:', error);
+        throw error;
       }
-    } catch (error) {
-      console.error('Error fetching trade activities from SnapTrade API:', error);
-      return { error: 'Failed to fetch trade activities from SnapTrade API' };
+    };
+
+    // Initial fetch
+    console.log('=== Starting paginated trade fetch ===');
+    let hasMorePages = await fetchTradeActivitiesWithPagination();
+    let pageCount = 1;
+    
+    // Continue fetching if we hit the 1000 activity limit
+    while (hasMorePages && pageCount < 20) { // Safety limit of 20 pages (20,000 trades)
+      pageCount++;
+      
+      // Sort current activities to get the oldest date for next pagination
+      allActivities.sort((a, b) => b.executedAt.getTime() - a.executedAt.getTime());
+      
+      if (allActivities.length === 0) break;
+      
+      // Get the oldest trade date from current results
+      const oldestTrade = allActivities[allActivities.length - 1];
+      const oldestTradeDate = oldestTrade.executedAt;
+      
+      console.log(`=== Fetching trade page ${pageCount} (trades before ${oldestTradeDate.toISOString().split('T')[0]}) ===`);
+      
+      // Subtract 1 day to avoid getting the same last transaction
+      const nextEndDate = new Date(oldestTradeDate);
+      nextEndDate.setDate(nextEndDate.getDate() - 1);
+      
+      // Check if we've gone past our start date filter
+      if (startDate && nextEndDate < startDate) {
+        console.log('Reached start date limit, stopping trade pagination');
+        break;
+      }
+      
+      hasMorePages = await fetchTradeActivitiesWithPagination(nextEndDate);
     }
+    
+    console.log(`=== Trade pagination complete: ${pageCount} pages, ${allActivities.length} total trade activities ===`);
 
     // Sort by execution date, most recent first
     allActivities.sort((a, b) => b.executedAt.getTime() - a.executedAt.getTime());

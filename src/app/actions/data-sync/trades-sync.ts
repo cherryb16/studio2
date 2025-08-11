@@ -1,131 +1,191 @@
-import { BigQuery } from '@google-cloud/bigquery';
-import { getEnhancedTrades } from '../snaptrade-trades';
-import { snaptrade } from '../snaptrade-client';
-import { format } from 'date-fns';
+// src/app/actions/data-sync/trades-sync.ts
+'use server';
 
+import {
+  Account,
+  Position,
+  UniversalActivity,
+} from 'snaptrade-typescript-sdk';
+import { snaptrade } from '@/app/actions/data-sources/snaptrade/client';
+import { db } from '@/lib/firebase-admin';
+import { getSnapTradeAccounts } from '@/app/actions/data-sources/snaptrade/accounts';
+import { WriteBatch } from 'firebase-admin/firestore';
+
+/**
+ * Main function to sync all trades, positions, and activities for a user.
+ * It fetches all accounts and then syncs data for each one.
+ */
 export async function syncUserTrades(
-  userId: string,
+  firebaseUserId: string,
   snaptradeUserId: string,
   userSecret: string,
-  fullSync = false
+  isFullSync: boolean = false
 ) {
-  const bigquery = new BigQuery();
-  const datasetId = 'trading_data';
+  console.log(`Starting trade sync for user: ${firebaseUserId}. Full sync: ${isFullSync}`);
   
-  // Get the latest sync time for this user
-  const [lastSyncRows] = await bigquery.query({
-    query: `
-      SELECT MAX(synced_at) as last_sync
-      FROM \`${datasetId}.trades\`
-      WHERE user_id = @userId
-    `,
-    params: { userId }
-  });
-  
-  const lastSync = lastSyncRows[0]?.last_sync;
-  const startDate = fullSync ? new Date(2000, 0, 1) : lastSync || new Date(2000, 0, 1);
+  const accounts = await getSnapTradeAccounts(snaptradeUserId, userSecret);
 
-  // Fetch all trades from SnapTrade
-  const trades = await getEnhancedTrades(
-    snaptradeUserId,
-    userSecret,
-    startDate
-  );
-
-  if ('error' in trades) {
-    throw new Error(`Failed to fetch trades: ${trades.error}`);
+  if ('error' in accounts) {
+    console.error('Failed to fetch accounts:', accounts.error);
+    return { success: false, error: accounts.error };
   }
 
-  // Process trades for BigQuery format
-  const tradesToInsert = trades.map(trade => ({
-    id: trade.id,
-    user_id: userId,
-    account_id: trade.accountId,
-    symbol: trade.symbol,
-    instrument: trade.instrument,
-    action: trade.action,
-    position: trade.position,
-    units: trade.units,
-    price: trade.price,
-    total_value: trade.totalValue,
-    fee: trade.fee,
-    currency: trade.currency,
-    executed_at: trade.executedAt,
-    trade_date: format(trade.executedAt, 'yyyy-MM-dd'),
-    is_option: trade.isOption,
-    status: trade.status,
-    realized_pnl: trade.realizedPnL,
-    entry_price: trade.entryPrice,
-    exit_price: trade.exitPrice,
-    holding_period: trade.holdingPeriod,
-    option_details: trade.optionDetails,
-    synced_at: new Date()
-  }));
-
-  // Process positions
-  const positions = new Map<string, any>();
+  if (!Array.isArray(accounts) || accounts.length === 0) {
+    console.log('User has no accounts to sync.');
+    return { success: true, message: 'No accounts to sync.' };
+  }
   
-  for (const trade of trades) {
-    const positionKey = trade.isOption ? 
-      `${trade.symbol}_${trade.optionDetails?.strike}_${trade.optionDetails?.expiration}_${trade.optionDetails?.type}` : 
-      trade.symbol;
+  const results = [];
+
+  for (const account of accounts) {
+    try {
+      // Create a new batch for each account to avoid exceeding batch size limits.
+      const batch = db.batch();
       
-    if (!positions.has(positionKey)) {
-      positions.set(positionKey, {
-        id: positionKey,
-        user_id: userId,
-        symbol: trade.symbol,
-        is_option: trade.isOption,
-        option_details: trade.optionDetails,
-        status: 'open',
-        opened_at: trade.executedAt,
-        total_units: 0,
-        remaining_units: 0,
-        average_entry_price: 0,
-        total_fees: 0,
-        synced_at: new Date()
+      console.log(`Syncing data for account: ${account.id} (${account.name})`);
+
+      // Sync account metadata first
+      await syncAccountMetadata(firebaseUserId, account, batch);
+      
+      // Sync activities, positions, etc., for the account
+      await syncActivitiesForAccount(snaptradeUserId, userSecret, account, firebaseUserId, batch, isFullSync);
+      await syncPositionsForAccount(snaptradeUserId, userSecret, account, firebaseUserId, batch);
+      
+      // Commit all the writes for this account in one go.
+      await batch.commit();
+      
+      results.push({
+        accountId: account.id,
+        success: true,
+        message: `Successfully synced account ${account.name}.`
+      });
+
+    } catch (error: any) {
+      console.error(`Error syncing account ${account.id} for user ${firebaseUserId}:`, error);
+      results.push({
+        accountId: account.id,
+        success: false,
+        error: error.message
       });
     }
+  }
+
+  return { success: true, results };
+}
+
+/**
+ * Saves or updates the metadata for a specific brokerage account.
+ */
+async function syncAccountMetadata(firebaseUserId: string, account: Account, batch: WriteBatch) {
+    const accountRef = db
+        .collection('snaptrade_users').doc(firebaseUserId)
+        .collection('accounts').doc(account.id);
+
+    const metadata = {
+        id: account.id,
+        brokerage: account.brokerage?.name,
+        accountName: account.name,
+        accountNumber: account.number,
+        baseCurrency: account.currency?.code,
+        createdAt: account.meta?.created_date,
+        lastActivitySyncAt: new Date(), // Update sync time
+    };
     
-    const position = positions.get(positionKey)!;
-    position.total_fees += trade.fee;
-    
-    if (trade.action === 'BUY') {
-      const newUnits = position.total_units + trade.units;
-      position.average_entry_price = (
-        (position.average_entry_price * position.total_units) + 
-        (trade.price * trade.units)
-      ) / newUnits;
-      position.total_units = newUnits;
-      position.remaining_units += trade.units;
-    } else {
-      position.remaining_units -= trade.units;
-      if (position.remaining_units === 0) {
-        position.status = 'closed';
-        position.closed_at = trade.executedAt;
-        position.average_exit_price = trade.price;
-        position.realized_pnl = trade.realizedPnL;
-      }
+    batch.set(accountRef, { meta: metadata }, { merge: true });
+}
+
+
+/**
+ * Fetches and syncs all activities (trades) for a given account.
+ */
+async function syncActivitiesForAccount(
+  snaptradeUserId: string,
+  userSecret: string,
+  account: Account,
+  firebaseUserId: string,
+  batch: WriteBatch,
+  isFullSync: boolean
+) {
+  // Define the date range for fetching activities
+  const endDate = new Date();
+  const startDate = new Date();
+  if (isFullSync) {
+    startDate.setFullYear(endDate.getFullYear() - 10); // Fetch up to 10 years for a full sync
+  } else {
+    startDate.setDate(endDate.getDate() - 90); // Fetch last 90 days for an incremental sync
+  }
+
+  // Corrected: Used 'transactionsAndReporting' API which contains the 'getActivities' method
+  const activitiesResponse = await snaptrade.transactionsAndReporting.getActivities({
+    userId: snaptradeUserId,
+    userSecret: userSecret,
+    accounts: account.id,
+    startDate: startDate.toISOString().split('T')[0],
+    endDate: endDate.toISOString().split('T')[0],
+  });
+
+  const activities: UniversalActivity[] = activitiesResponse.data;
+  console.log(`Found ${activities.length} activities for account ${account.id}.`);
+
+  for (const activity of activities) {
+    // Correctly reference the nested 'activities' subcollection
+    const activityRef = db
+      .collection('snaptrade_users').doc(firebaseUserId)
+      .collection('accounts').doc(account.id)
+      .collection('activities').doc(activity.id);
+
+    // Add the set operation to the batch
+    batch.set(activityRef, { ...activity, updatedAt: new Date() });
+  }
+}
+
+/**
+ * Fetches and syncs all positions for a given account.
+ */
+async function syncPositionsForAccount(
+  snaptradeUserId: string,
+  userSecret: string,
+  account: Account,
+  firebaseUserId: string,
+  batch: WriteBatch
+) {
+  const positionsResponse = await snaptrade.accountInformation.getUserHoldings({
+    userId: snaptradeUserId,
+    userSecret: userSecret,
+    accountId: account.id,
+  });
+
+  const positions = positionsResponse.data.positions;
+  if (!positions || !Array.isArray(positions)) {
+      console.log(`No positions array found for account ${account.id}.`);
+      return;
+  }
+  
+  console.log(`Found ${positions.length} positions for account ${account.id}.`);
+
+  for (const position of positions) {
+    // Corrected: Added a null check for position.symbol to prevent runtime errors.
+    if (position.symbol) {
+        let positionRef;
+        let positionData: Position & { updatedAt: Date };
+
+        // Determine if it's an equity or an option and set the reference accordingly
+        if (position.symbol.symbol_type === 'OPTION') {
+          positionRef = db
+            .collection('snaptrade_users').doc(firebaseUserId)
+            .collection('accounts').doc(account.id)
+            .collection('positions_options').doc(position.symbol.id); // Use OCC Ticker for ID
+        } else {
+          positionRef = db
+            .collection('snaptrade_users').doc(firebaseUserId)
+            .collection('accounts').doc(account.id)
+            .collection('positions_equities').doc(position.symbol.id); // Use Symbol for ID
+        }
+        
+        positionData = { ...position, updatedAt: new Date() };
+        
+        // Add the set operation to the batch
+        batch.set(positionRef, positionData, { merge: true });
     }
   }
-
-  // Insert data in batches
-  if (tradesToInsert.length > 0) {
-    await bigquery
-      .dataset(datasetId)
-      .table('trades')
-      .insert(tradesToInsert, { ignoreUnknownValues: true });
-  }
-
-  if (positions.size > 0) {
-    await bigquery
-      .dataset(datasetId)
-      .table('positions')
-      .insert([...positions.values()], { ignoreUnknownValues: true });
-  }
-
-  return {
-    tradesCount: tradesToInsert.length,
-    positionsCount: positions.size
-  };
 }

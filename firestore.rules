@@ -1,86 +1,77 @@
 rules_version = '2';
+
 service cloud.firestore {
   match /databases/{database}/documents {
-    
-    // Helper functions
+
+    // ==================== HELPER FUNCTIONS ====================
+    // Checks if a user is authenticated.
     function isAuthenticated() {
       return request.auth != null;
     }
-    
+
+    // Checks if the requesting user is the owner of the document.
     function isOwner(userId) {
       return request.auth.uid == userId;
     }
 
-    // ==================== SNAPTRADE USER DATA ====================
-    
-    // Main snaptrade_users collection with subcollections
+    // ==================== USER DATA & TRADING COLLECTIONS ====================
+
+    // Main collection for user-specific trading data.
+    // All subcollections inherit these ownership rules.
     match /snaptrade_users/{userId} {
+      // Users can only read and write their own documents.
       allow read, write: if isAuthenticated() && isOwner(userId);
-      
-      // Trades subcollection
-      match /trades/{tradeId} {
+
+      // This single rule applies to ALL nested subcollections and documents,
+      // including:
+      // - /information/onboarding_profile/{docId}
+      // - /information/accounts/{accountId}/... (and its subcollections)
+      // - /metrics/portfolio_summary/{docId}
+      // - /metrics/trade_stats_all/{docId}
+      // etc.
+      match /{subcollection}/{path=**} {
         allow read, write: if isAuthenticated() && isOwner(userId);
-      }
-      
-      // Positions subcollections
-      match /positions_options/{positionId} {
-        allow read, write: if isAuthenticated() && isOwner(userId);
-      }
-      
-      match /positions_equities/{positionId} {
-        allow read, write: if isAuthenticated() && isOwner(userId);
-      }
-      
-      // Metrics subcollection
-      match /metrics/{metricId} {
-        allow read, write: if isAuthenticated() && isOwner(userId);
-      }
-      
-      // Information subcollection
-      match /information/{infoId} {
-        allow read, write: if isAuthenticated() && isOwner(userId);
-      }
-    }
-    
-    // Users collection
-    match /users/{userId} {
-      allow read, write: if isAuthenticated() && isOwner(userId);
-    }
-    
-    // ==================== STRIPE COLLECTIONS ====================
-    
-    // Stripe customer data - users can only access their own
-    match /customers/{uid} {
-      allow read, write: if request.auth != null && request.auth.uid == uid;
-      
-      // Allow users to create checkout sessions
-      match /checkout_sessions/{id} {
-        allow read, write: if request.auth != null && request.auth.uid == uid;
-      }
-      
-      // Allow users to read their subscriptions
-      match /subscriptions/{id} {
-        allow read: if request.auth != null && request.auth.uid == uid;
-      }
-      
-      // Allow users to read their payments
-      match /payments/{id} {
-        allow read: if request.auth != null && request.auth.uid == uid;
-      }
-    }
-    
-    // Products and prices are public (read-only)
-    match /products/{id} {
-      allow read: if true;
-      
-      match /prices/{id} {
-        allow read: if true;
       }
     }
 
-    // ==================== DENY ALL OTHER ACCESS ====================
-    match /{document=**} {
+    // CRITICAL SECURITY RULE: Server-Side Only Secrets
+    // This collection stores sensitive user secrets and MUST NOT be accessible
+    // from the client. Access should only be granted to backend services
+    // (e.g., Cloud Functions) using Admin SDK credentials.
+    match /snaptrade_user_secrets/{userId} {
       allow read, write: if false;
+    }
+
+    // General user profile information (if separate from snaptrade_users).
+    match /users/{userId} {
+      allow read, write: if isAuthenticated() && isOwner(userId);
+    }
+
+    // ==================== STRIPE PAYMENTS COLLECTIONS ====================
+
+    // Stripe customer data. Users can only access their own.
+    match /customers/{uid} {
+      allow read: if isAuthenticated() && isOwner(uid);
+
+      // Allow users to create checkout sessions and read their subscriptions/payments.
+      match /checkout_sessions/{id} {
+        allow read, write: if isAuthenticated() && isOwner(uid);
+      }
+      match /subscriptions/{id} {
+        allow read: if isAuthenticated() && isOwner(uid);
+      }
+      match /payments/{id} {
+        allow read: if isAuthenticated() && isOwner(uid);
+      }
+    }
+
+    // Products and prices are public and read-only for all users.
+    match /products/{id} {
+      allow read: if true;
+
+      match /prices/{id} {
+        allow read: if true;
+      }
     }
   }
 }

@@ -1,5 +1,5 @@
 // Comprehensive Options Trading Onboarding Schema with Scoring System
-import { doc, setDoc, getDoc, updateDoc } from 'firebase/firestore';
+import { doc, getDoc, updateDoc, deleteDoc } from 'firebase/firestore';
 import { db } from './firebase';
 import { COLLECTIONS } from './firestore-schema';
 
@@ -276,7 +276,9 @@ export class OnboardingScorer {
       '1_to_3_years': 2,
       'more_than_3_years': 3
     };
-    experienceScore += experienceMap[answers.tradingStartDate || 'less_than_3_months'];
+    // Fix field name mapping - questions use snake_case IDs
+    const tradingStartValue = (answers as any).trading_start_date || (answers as any).tradingStartDate || 'less_than_3_months';
+    experienceScore += experienceMap[tradingStartValue as keyof typeof experienceMap] || 0;
 
     const skillMap = {
       'beginner': 0,
@@ -284,10 +286,12 @@ export class OnboardingScorer {
       'advanced': 2,
       'expert': 3
     };
-    experienceScore += skillMap[answers.selfRatedSkill || 'beginner'];
+    const skillValue = (answers as any).self_rated_skill || (answers as any).selfRatedSkill || 'beginner';
+    experienceScore += skillMap[skillValue as keyof typeof skillMap] || 0;
 
     // Strategy count scoring
-    const strategyCount = answers.strategiesUsed?.length || 0;
+    const strategiesUsed = (answers as any).strategies_used || (answers as any).strategiesUsed || [];
+    const strategyCount = strategiesUsed.length || 0;
     if (strategyCount === 0 || strategyCount === 1) experienceScore += 0;
     else if (strategyCount <= 3) experienceScore += 1;
     else if (strategyCount <= 6) experienceScore += 2;
@@ -299,14 +303,16 @@ export class OnboardingScorer {
       'can_apply': 2,
       'daily_use': 3
     };
-    experienceScore += greeksMap[answers.greeksKnowledge || 'none'];
+    const greeksValue = (answers as any).greeks_knowledge || (answers as any).greeksKnowledge || 'none';
+    experienceScore += greeksMap[greeksValue as keyof typeof greeksMap] || 0;
 
     const riskPlanMap = {
       'never': 0,
       'sometimes': 1,
       'always': 3
     };
-    experienceScore += riskPlanMap[answers.riskManagementPlan || 'never'];
+    const riskPlanValue = (answers as any).risk_management_plan || (answers as any).riskManagementPlan || 'never';
+    experienceScore += riskPlanMap[riskPlanValue as keyof typeof riskPlanMap] || 0;
 
     // Risk Management Scoring
     const maxRiskMap = {
@@ -316,14 +322,16 @@ export class OnboardingScorer {
       '1_to_2_percent': 3,
       'not_sure': 0
     };
-    riskManagementScore += maxRiskMap[answers.maxPortfolioPerTrade || 'not_sure'];
+    const maxRiskValue = (answers as any).max_portfolio_per_trade || (answers as any).maxPortfolioPerTrade || 'not_sure';
+    riskManagementScore += maxRiskMap[maxRiskValue as keyof typeof maxRiskMap] || 0;
 
     const positionSizingMap = {
       'no': 0,
       'sometimes': 1,
       'yes': 3
     };
-    riskManagementScore += positionSizingMap[answers.positionSizingRules || 'no'];
+    const positionSizingValue = (answers as any).position_sizing_rules || (answers as any).positionSizingRules || 'no';
+    riskManagementScore += positionSizingMap[positionSizingValue as keyof typeof positionSizingMap] || 0;
 
     // Strategy Depth Scoring
     const strategyScores = {
@@ -348,7 +356,7 @@ export class OnboardingScorer {
       'volatility_trading': 3
     };
 
-    answers.strategiesUsed?.forEach(strategy => {
+    strategiesUsed.forEach((strategy: string) => {
       strategyDepthScore += (strategyScores as any)[strategy] || 0;
     });
 
@@ -665,17 +673,25 @@ export interface FirestoreUserProfile extends UserProfile {
 
 export class OnboardingService {
   static async saveUserProfile(userId: string, profile: UserProfile) {
-    const docRef = doc(db, COLLECTIONS.SNAPTRADE_USERS, userId, COLLECTIONS.INFORMATION, 'onboarding_profile');
-    await setDoc(docRef, {
-      ...profile,
-      userId,
-      createdAt: new Date(),
-      updatedAt: new Date()
+    // Use API route for server-side save to avoid client-side permission issues
+    const response = await fetch('/api/firebase/saveOnboardingProfile', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ userId, profile }),
     });
+
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.error || 'Failed to save onboarding profile');
+    }
+
+    return await response.json();
   }
 
   static async getUserProfile(userId: string): Promise<FirestoreUserProfile | null> {
-    const docRef = doc(db, COLLECTIONS.SNAPTRADE_USERS, userId, COLLECTIONS.INFORMATION, 'onboarding_profile');
+    const docRef = doc(db, COLLECTIONS.SNAPTRADE_USERS, userId, COLLECTIONS.ONBOARDING_INFORMATION, userId);
     const docSnap = await getDoc(docRef);
     
     if (docSnap.exists()) {
@@ -685,10 +701,31 @@ export class OnboardingService {
   }
 
   static async updateUserProfile(userId: string, updates: Partial<UserProfile>) {
-    const docRef = doc(db, COLLECTIONS.SNAPTRADE_USERS, userId, COLLECTIONS.INFORMATION, 'onboarding_profile');
+    const docRef = doc(db, COLLECTIONS.SNAPTRADE_USERS, userId, COLLECTIONS.ONBOARDING_INFORMATION, userId);
     await updateDoc(docRef, {
       ...updates,
       updatedAt: new Date()
     });
+  }
+
+  static async resetOnboardingStatus(userId: string) {
+    try {
+      // Delete the onboarding profile document
+      const profileRef = doc(db, COLLECTIONS.SNAPTRADE_USERS, userId, COLLECTIONS.ONBOARDING_INFORMATION, userId);
+      await deleteDoc(profileRef);
+
+      // Update the main user document to mark onboarding as incomplete
+      const userDocRef = doc(db, COLLECTIONS.SNAPTRADE_USERS, userId);
+      await updateDoc(userDocRef, {
+        onboardingCompleted: false,
+        tradingExperience: null,
+        updatedAt: new Date()
+      });
+      
+      console.log(`Reset onboarding status for user: ${userId}`);
+    } catch (error) {
+      console.error('Error resetting onboarding status:', error);
+      throw error;
+    }
   }
 }

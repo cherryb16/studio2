@@ -10,6 +10,7 @@ export interface DeletionReport {
     positions_options: number;
     positions_equities: number;
     metrics: number;
+    onboarding_profile: number;
     information: number;
   };
   totalDocuments: number;
@@ -28,6 +29,7 @@ export class UserDeletionService {
         positions_options: 0,
         positions_equities: 0,
         metrics: 0,
+        onboarding_profile: 0,
         information: 0
       },
       totalDocuments: 0,
@@ -57,6 +59,16 @@ export class UserDeletionService {
         report.totalDocuments += deletedCount;
         console.log(`Deleted ${deletedCount} documents from ${collection.name}`);
       }
+
+      // Delete onboarding information subcollection
+      const onboardingDeletedCount = await this.deleteCollection(
+        adminDb,
+        `snaptrade_users/${userId}/${COLLECTIONS.ONBOARDING_INFORMATION}`,
+        userId
+      );
+      report.deletedCollections.onboarding_profile = onboardingDeletedCount;
+      report.totalDocuments += onboardingDeletedCount;
+      console.log(`Deleted ${onboardingDeletedCount} documents from onboarding_information`);
 
       // Delete the main user document
       await adminDb.collection(COLLECTIONS.SNAPTRADE_USERS).doc(userId).delete();
@@ -164,6 +176,15 @@ export class UserDeletionService {
       console.log(`Deleted user profile document`);
     } catch (error) {
       console.log(`No user profile document found`);
+    }
+
+    // Delete SnapTrade user secrets
+    try {
+      await adminDb.collection('snaptrade_user_secrets').doc(userId).delete();
+      report.totalDocuments += 1;
+      console.log(`Deleted SnapTrade user secrets`);
+    } catch (error) {
+      console.log(`No SnapTrade user secrets found`);
     }
 
     // Delete Stripe customer data

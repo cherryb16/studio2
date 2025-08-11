@@ -32,7 +32,10 @@ export const ConnectBrokerageButton = forwardRef<HTMLButtonElement>((props, ref)
       const response = await fetch('/api/snaptrade/login-url', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ firebaseUserId: user.uid }),
+        body: JSON.stringify({ 
+          firebaseUserId: user.uid,
+          redirectUrl: window.location.origin + window.location.pathname
+        }),
       });
       
       console.log('API response status:', response.status);

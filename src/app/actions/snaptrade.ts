@@ -15,8 +15,8 @@ import {
 } from './data-sources/snaptrade/positions';
 
 // Wrapper functions for backwards compatibility in server actions
-export async function getSnapTradeLoginUrl(firebaseUserId: string) {
-  return await getSnapTradeLoginUrlImpl(firebaseUserId);
+export async function getSnapTradeLoginUrl(firebaseUserId: string, redirectUrl?: string) {
+  return await getSnapTradeLoginUrlImpl(firebaseUserId, redirectUrl);
 }
 
 export async function getSnapTradeCredentials(firebaseUserId: string) {

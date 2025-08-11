@@ -2,14 +2,14 @@ import { getSnapTradeLoginUrl } from '@/app/actions/snaptrade';
 
 export async function POST(request: Request) {
   try {
-    const { firebaseUserId } = await request.json();
+    const { firebaseUserId, redirectUrl } = await request.json();
 
     if (!firebaseUserId) {
       return new Response(JSON.stringify({ error: 'firebaseUserId is required' }), { status: 400 });
     }
 
     // Use the existing snaptrade.ts function that handles credential creation automatically
-    const result = await getSnapTradeLoginUrl(firebaseUserId);
+    const result = await getSnapTradeLoginUrl(firebaseUserId, redirectUrl);
     
     if (result.error) {
       return new Response(JSON.stringify({ error: result.error }), { status: 400 });

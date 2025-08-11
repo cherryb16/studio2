@@ -97,7 +97,7 @@ export interface FirestorePortfolioSummary {
 }
 
 // ==================== COLLECTION STRUCTURE ====================
-// New structure: snaptrade_users/{userId}/trades, snaptrade_users/{userId}/positions/options, snaptrade_users/{userId}/positions/equities, snaptrade_users/{userId}/metrics, snaptrade_users/{userId}/information
+// Structure: snaptrade_users/{userId}/trades, snaptrade_users/{userId}/positions_options, snaptrade_users/{userId}/positions_equities, snaptrade_users/{userId}/metrics, snaptrade_users/{userId}/onboarding_information/{actual_information}, snaptrade_users/{userId}/information
 
 export const COLLECTIONS = {
   // Main collection containing all SnapTrade users
@@ -108,7 +108,8 @@ export const COLLECTIONS = {
   POSITIONS_OPTIONS: 'positions_options',
   POSITIONS_EQUITIES: 'positions_equities',
   METRICS: 'metrics',
-  INFORMATION: 'information'
+  ONBOARDING_INFORMATION: 'onboarding_information',
+  INFORMATION: 'information' // Kept for backward compatibility
 } as const;
 
 // Metrics types (combining portfolio_summaries and user_metrics)

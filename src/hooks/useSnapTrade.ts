@@ -27,7 +27,13 @@ const useSnapTradeCredentials = () => {
       if (user) {
         try {
           console.log('Fetching credentials for user:', user.uid);
-          const response = await fetch(`/api/firebase/getCredentials?firebaseUserId=${user.uid}`);
+          const response = await fetch(`/api/firebase/getCredentials?firebaseUserId=${user.uid}`, {
+            cache: 'no-store',
+            headers: {
+              'Cache-Control': 'no-cache, no-store, must-revalidate',
+              'Pragma': 'no-cache'
+            }
+          });
           
           if (response.ok) {
             const creds = await response.json();

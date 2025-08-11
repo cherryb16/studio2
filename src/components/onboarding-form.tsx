@@ -311,16 +311,72 @@ export function OnboardingForm({ onComplete, onSkip }: OnboardingFormProps) {
                   tailored to your trading style and goals.
                 </p>
                 
-                {/* Show preview of their profile */}
+                {/* Show gamified profile with score and level */}
                 {(() => {
                   const preview = OnboardingFlow.createUserProfile(answers as OnboardingAnswers);
+                  const { score } = preview;
+                  
+                  // Calculate level progression
+                  const maxScore = 35; // Rough estimate of max possible score
+                  const progressPercent = Math.min((score.totalScore / maxScore) * 100, 100);
+                  
+                  // Level badge colors
+                  const getLevelColor = (level: string) => {
+                    switch(level) {
+                      case 'beginner': return 'bg-green-100 text-green-800 border-green-200';
+                      case 'intermediate': return 'bg-blue-100 text-blue-800 border-blue-200';
+                      case 'advanced': return 'bg-purple-100 text-purple-800 border-purple-200';
+                      default: return 'bg-gray-100 text-gray-800 border-gray-200';
+                    }
+                  };
+                  
                   return (
-                    <div className="bg-blue-50 p-4 rounded-lg text-left">
-                      <h4 className="font-medium mb-2">Your Trading Profile:</h4>
-                      <ul className="text-sm space-y-1">
-                        <li>• Experience Level: <span className="font-medium capitalize">{preview.score.skillLevel}</span></li>
-                        <li>• Learning Track: <span className="font-medium capitalize">{preview.score.learningTrack}</span></li>
-                      </ul>
+                    <div className="bg-gradient-to-br from-blue-50 to-indigo-50 p-6 rounded-lg text-left border border-blue-100">
+                      <div className="flex items-center justify-between mb-4">
+                        <h4 className="text-lg font-semibold text-gray-900">🎯 Your Trading Level</h4>
+                        <div className={`px-3 py-1 rounded-full text-sm font-medium border ${getLevelColor(score.skillLevel)}`}>
+                          Level: {score.skillLevel.charAt(0).toUpperCase() + score.skillLevel.slice(1)}
+                        </div>
+                      </div>
+                      
+                      {/* Score Display */}
+                      <div className="mb-4">
+                        <div className="flex items-center justify-between mb-2">
+                          <span className="text-sm font-medium text-gray-700">Trading Score</span>
+                          <span className="text-2xl font-bold text-indigo-600">{score.totalScore}</span>
+                        </div>
+                        <div className="w-full bg-gray-200 rounded-full h-2">
+                          <div 
+                            className="bg-gradient-to-r from-blue-500 to-indigo-600 h-2 rounded-full transition-all duration-500"
+                            style={{ width: `${progressPercent}%` }}
+                          />
+                        </div>
+                        <p className="text-xs text-gray-500 mt-1">
+                          Complete trainings and connect more accounts to level up! 🚀
+                        </p>
+                      </div>
+
+                      {/* Score Breakdown */}
+                      <div className="grid grid-cols-3 gap-4 text-center">
+                        <div className="bg-white/50 rounded p-3">
+                          <div className="text-lg font-semibold text-gray-800">{score.experienceScore}</div>
+                          <div className="text-xs text-gray-600">Experience</div>
+                        </div>
+                        <div className="bg-white/50 rounded p-3">
+                          <div className="text-lg font-semibold text-gray-800">{score.riskManagementScore}</div>
+                          <div className="text-xs text-gray-600">Risk Mgmt</div>
+                        </div>
+                        <div className="bg-white/50 rounded p-3">
+                          <div className="text-lg font-semibold text-gray-800">{score.strategyDepthScore}</div>
+                          <div className="text-xs text-gray-600">Strategy</div>
+                        </div>
+                      </div>
+                      
+                      <div className="mt-4 pt-4 border-t border-blue-200">
+                        <p className="text-sm text-gray-700">
+                          <span className="font-medium">Learning Track:</span> {score.learningTrack.charAt(0).toUpperCase() + score.learningTrack.slice(1)}
+                        </p>
+                      </div>
                     </div>
                   );
                 })()}

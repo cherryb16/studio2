@@ -7,7 +7,7 @@ import { db } from '@/lib/firebase-admin';
 
 // ==================== AUTHENTICATION & USER MANAGEMENT ====================
 
-export async function getSnapTradeLoginUrl(firebaseUserId: string) {
+export async function getSnapTradeLoginUrl(firebaseUserId: string, redirectUrl?: string) {
   const clientId = process.env.SNAPTRADE_CLIENT_ID;
   const secret = process.env.SNAPTRADE_SECRET;
 
@@ -17,17 +17,17 @@ export async function getSnapTradeLoginUrl(firebaseUserId: string) {
   }
 
   try {
-    console.log('Checking for existing SnapTrade credentials in Firestore...');
+    console.log('Checking for existing SnapTrade credentials...');
     
+    // This function now securely fetches the secret from a server-only collection.
     const firestoreCredentials = await getSnapTradeCredentials(firebaseUserId);
     
     let userSecretToUse: string;
-    let snaptradeUserIdToUse: string;
+    let snaptradeUserIdToUse: string = firebaseUserId; // SnapTrade User ID is the same as Firebase UID
 
     if (firestoreCredentials && firestoreCredentials.userSecret) {
-      snaptradeUserIdToUse = firestoreCredentials.snaptradeUserId;
       userSecretToUse = firestoreCredentials.userSecret;
-      console.log('Using existing SnapTrade credentials from Firestore.');
+      console.log('Using existing SnapTrade credentials from secure storage.');
     } else {
       console.log(`Registering new SnapTrade user: ${firebaseUserId}`);
       const registerResponse = await snaptrade.authentication.registerSnapTradeUser({
@@ -40,16 +40,16 @@ export async function getSnapTradeLoginUrl(firebaseUserId: string) {
         return { error: 'Failed to register user with SnapTrade.' };
       }
 
-      snaptradeUserIdToUse = registrationData.userId;
       userSecretToUse = registrationData.userSecret;
 
+      // This function now securely saves the credentials to their respective collections.
       await saveSnapTradeCredentials(firebaseUserId, registrationData);
-      console.log('New SnapTrade user registered and credentials saved.');
+      console.log('New SnapTrade user registered and credentials saved securely.');
     }
 
-    if (!userSecretToUse || !snaptradeUserIdToUse) {
-      console.error('User credentials missing');
-      return { error: 'User credentials missing.' };
+    if (!userSecretToUse) {
+      console.error('User secret missing');
+      return { error: 'User secret missing.' };
     }
 
     const loginResponse = await snaptrade.authentication.loginSnapTradeUser({
@@ -57,7 +57,7 @@ export async function getSnapTradeLoginUrl(firebaseUserId: string) {
       userSecret: userSecretToUse,
       immediateRedirect: true,
       connectionPortalVersion: "v4",
-      customRedirect: process.env.SNAPTRADE_REDIRECT_URI,
+      customRedirect: redirectUrl || process.env.SNAPTRADE_REDIRECT_URI,
     });
 
     if (loginResponse.data && 'redirectURI' in loginResponse.data) {
@@ -80,48 +80,49 @@ export async function getSnapTradeLoginUrl(firebaseUserId: string) {
   }
 }
 
-export async function getSnapTradeCredentials(firebaseUserId: string) {
+/**
+ * Securely retrieves the user's SnapTrade secret from the server-only collection.
+ */
+export async function getSnapTradeCredentials(firebaseUserId: string): Promise<{ snaptradeUserId: string; userSecret: string } | null> {
   try {
-    console.log(`Querying Firestore for user: ${firebaseUserId}`);
-    const userDoc = await db.collection('snaptrade_users').doc(firebaseUserId).get();
+    console.log(`Querying secure storage for user secret: ${firebaseUserId}`);
+    const secretDoc = await db.collection('snaptrade_user_secrets').doc(firebaseUserId).get();
     
-    console.log(`Document exists: ${userDoc.exists}`);
-    
-    if (userDoc.exists) {
-      const data = userDoc.data();
-      console.log('Full document data:', JSON.stringify(data, null, 2));
-      
-      const snaptradeUserId = firebaseUserId;
-      const userSecret = data?.snaptradeUserSecret;
-      
-      console.log(`snaptradeUserID: ${snaptradeUserId} (using Firebase UID)`);
-      console.log(`snaptradeUserSecret: ${userSecret ? '[PRESENT]' : '[MISSING]'}`);
+    if (secretDoc.exists) {
+      const data = secretDoc.data();
+      const userSecret = data?.secret;
       
       if (userSecret) {
-        return { snaptradeUserId, userSecret };
+        console.log('User secret found in secure storage.');
+        // The snaptradeUserId is always the same as the firebaseUserId in our setup.
+        return { snaptradeUserId: firebaseUserId, userSecret };
       } else {
-        console.log('SnapTrade user secret missing in Firestore document');
+        console.log('User secret is missing from the secret document.');
       }
     } else {
-      console.log('User document does not exist in snaptrade_users collection');
+      console.log('User secret document does not exist.');
     }
     return null;
   } catch (error) {
-    console.error('Error getting SnapTrade credentials:', error);
+    console.error('Error getting SnapTrade credentials from secure storage:', error);
     return null;
   }
 }
 
+/**
+ * Securely retrieves all SnapTrade credentials for a cron job or other backend process.
+ * This should only be used in a secure server-side environment.
+ */
 export async function getAllSnapTradeCredentials() {
   try {
-    console.log('Querying Firestore for all users with SnapTrade credentials...');
-    const snapshot = await db.collection('snaptrade_users').get();
+    console.log('Querying secure storage for all user secrets...');
+    const secretsSnapshot = await db.collection('snaptrade_user_secrets').get();
     
     const users: Array<{firebaseUserId: string, snaptradeUserId: string, userSecret: string}> = [];
     
-    snapshot.forEach((doc: any) => {
+    secretsSnapshot.forEach((doc: any) => {
       const data = doc.data();
-      const userSecret = data?.snaptradeUserSecret;
+      const userSecret = data?.secret;
       
       if (userSecret) {
         users.push({
@@ -132,29 +133,100 @@ export async function getAllSnapTradeCredentials() {
       }
     });
     
-    console.log(`Found ${users.length} users with SnapTrade credentials`);
+    console.log(`Found ${users.length} users with SnapTrade credentials.`);
     return users;
   } catch (error) {
-    console.error('Error getting all SnapTrade credentials:', error);
+    console.error('Error getting all SnapTrade credentials from secure storage:', error);
     return [];
   }
 }
 
+/**
+ * Securely saves SnapTrade credentials.
+ * The public SnapTrade User ID is stored in 'snaptrade_users'.
+ * The private userSecret is stored in the server-only 'snaptrade_user_secrets' collection.
+ */
 async function saveSnapTradeCredentials(firebaseUserId: string, credentials: UserIDandSecret) {
   try {
+    // 1. Store the public-facing data in the main user document.
     const userRef = db.collection('snaptrade_users').doc(firebaseUserId);
-    await userRef.update({
-      SnaptradeUserID: firebaseUserId,
-      snaptradeUserSecret: credentials.userSecret,
+    await userRef.set({
+      SnaptradeUserID: credentials.userId, // Storing the ID is fine
       snaptradeRegisteredAt: new Date().toISOString(),
+    }, { merge: true }); // Use merge to avoid overwriting other user fields
+
+    // 2. Store the sensitive secret in the secure, server-only collection.
+    const secretRef = db.collection('snaptrade_user_secrets').doc(firebaseUserId);
+    await secretRef.set({
+      secret: credentials.userSecret,
     });
-    console.log('SnapTrade credentials stored in Firestore.');
+
+    console.log('SnapTrade credentials stored securely.');
+
+    // Trigger immediate data sync after successful registration
+    try {
+      console.log('Triggering initial data sync for new user...');
+      await triggerInitialDataSync(firebaseUserId, credentials);
+    } catch (syncError) {
+      console.error('Initial data sync failed, but registration was successful:', syncError);
+      // Don't fail the registration if sync fails
+    }
   } catch (error) {
-    console.error('Failed to store SnapTrade credentials:', error);
+    console.error('Failed to store SnapTrade credentials securely:', error);
+  }
+}
+
+/**
+ * Triggers initial data sync after successful SnapTrade registration.
+ * This populates Firestore with user's holdings, positions, and trade activities.
+ */
+async function triggerInitialDataSync(firebaseUserId: string, credentials: UserIDandSecret) {
+  try {
+    // Import the sync service
+    const { SnapTradeFirestoreSync } = await import('@/lib/snaptrade-firestore-sync');
+    
+    const snapTradeCredentials = {
+      userId: firebaseUserId,
+      snaptradeUserId: credentials.userId,
+      userSecret: credentials.userSecret
+    };
+
+    console.log('Starting initial full sync for new user...');
+    console.log('Sync credentials:', { 
+      userId: snapTradeCredentials.userId, 
+      hasSnaptradeUserId: !!snapTradeCredentials.snaptradeUserId, 
+      hasUserSecret: !!snapTradeCredentials.userSecret 
+    });
+    
+    // Run full sync to populate all data
+    const syncResult = await SnapTradeFirestoreSync.fullSync(snapTradeCredentials);
+    
+    console.log('Sync result:', syncResult);
+    
+    if (syncResult.success) {
+      console.log(`Initial sync completed successfully: ${syncResult.positions} positions, ${syncResult.trades} trades`);
+      
+      // Update user document with sync timestamp
+      const userRef = db.collection('snaptrade_users').doc(firebaseUserId);
+      await userRef.update({
+        initialSyncCompleted: true,
+        initialSyncCompletedAt: new Date().toISOString(),
+        lastSyncAt: new Date().toISOString()
+      });
+      
+    } else {
+      console.error('Initial sync failed:', syncResult.error);
+      throw new Error(syncResult.error);
+    }
+    
+  } catch (error) {
+    console.error('Error in triggerInitialDataSync:', error);
+    throw error;
   }
 }
 
 // ==================== ACCOUNT FUNCTIONS ====================
+// (No changes needed below this line for the security fix)
 
 export async function getSnapTradeAccounts(
   snaptradeUserId: string, 

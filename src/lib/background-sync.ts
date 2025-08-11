@@ -1,12 +1,44 @@
 // Background sync service for keeping Firestore data fresh
 'use client';
 
-import { SnapTradeFirestoreSync, SyncScheduler } from './snaptrade-firestore-sync';
+// Removed import of SnapTradeFirestoreSync to prevent client-side Firebase Admin SDK errors
+// Using API routes instead for sync operations
 
 interface SyncCredentials {
   userId: string;
   snaptradeUserId: string;
   userSecret: string;
+}
+
+// Helper function to check market hours
+function isMarketHours(date: Date): boolean {
+  const hour = date.getHours();
+  const day = date.getDay();
+  
+  return day >= 1 && day <= 5 && hour >= 9 && hour <= 16;
+}
+
+// Helper function to call sync API
+async function callSyncAPI(credentials: SyncCredentials, fullSync: boolean = false) {
+  const response = await fetch('/api/sync-firestore', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      userId: credentials.userId,
+      snaptradeUserId: credentials.snaptradeUserId,
+      userSecret: credentials.userSecret,
+      fullSync
+    }),
+  });
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.error || 'Sync failed');
+  }
+
+  return response.json();
 }
 
 export class BackgroundSyncService {
@@ -27,7 +59,7 @@ export class BackgroundSyncService {
     // Market hours check interval (every minute)
     const marketCheckInterval = setInterval(() => {
       const wasOpen = this.isMarketOpen;
-      this.isMarketOpen = SyncScheduler.isMarketHours(new Date());
+      this.isMarketOpen = isMarketHours(new Date());
       
       if (wasOpen !== this.isMarketOpen) {
         console.log(`Market ${this.isMarketOpen ? 'opened' : 'closed'} - adjusting sync frequency`);
@@ -39,7 +71,7 @@ export class BackgroundSyncService {
       if (!options.enableMarketHoursOnly || this.isMarketOpen) {
         try {
           console.log(`Starting quick sync for user ${userId}`);
-          await SnapTradeFirestoreSync.quickSync(credentials);
+          await callSyncAPI(credentials, false);
           console.log(`Quick sync completed for user ${userId}`);
         } catch (error) {
           console.error(`Quick sync failed for user ${userId}:`, error);
@@ -51,7 +83,7 @@ export class BackgroundSyncService {
     const fullSyncInterval = setInterval(async () => {
       try {
         console.log(`Starting full sync for user ${userId}`);
-        await SnapTradeFirestoreSync.fullSync(credentials);
+        await callSyncAPI(credentials, true);
         console.log(`Full sync completed for user ${userId}`);
       } catch (error) {
         console.error(`Full sync failed for user ${userId}:`, error);
@@ -96,10 +128,7 @@ export class BackgroundSyncService {
   // Trigger immediate sync
   static async triggerSync(credentials: SyncCredentials, fullSync = false) {
     try {
-      const result = fullSync 
-        ? await SnapTradeFirestoreSync.fullSync(credentials)
-        : await SnapTradeFirestoreSync.quickSync(credentials);
-      
+      const result = await callSyncAPI(credentials, fullSync);
       return result;
     } catch (error) {
       console.error('Manual sync failed:', error);
@@ -111,7 +140,7 @@ export class BackgroundSyncService {
   private static async triggerInitialSync(credentials: SyncCredentials) {
     try {
       // Do a quick sync immediately
-      await SnapTradeFirestoreSync.quickSync(credentials);
+      await callSyncAPI(credentials, false);
       console.log(`Initial sync completed for user ${credentials.userId}`);
     } catch (error) {
       console.error(`Initial sync failed for user ${credentials.userId}:`, error);

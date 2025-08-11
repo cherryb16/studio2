@@ -23,8 +23,8 @@ export async function GET(request: Request) {
       // Attempt to fetch the onboarding profile to extract the experience level
       let experienceLevel: string | null = null;
       try {
-        // In the Firestore schema, the onboarding profile is stored under the information subcollection
-        const onboardingDocRef = userRef.collection('information').doc('onboarding_profile');
+        // In the Firestore schema, the onboarding profile is stored in the onboarding_information subcollection
+        const onboardingDocRef = userRef.collection('onboarding_information').doc(uid);
         const onboardingDoc = await onboardingDocRef.get();
         if (onboardingDoc.exists) {
           const profileData = onboardingDoc.data();

@@ -87,6 +87,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [experienceLevel, setExperienceLevel] = useState<string | null>(null);
+  const [userCreationHandled, setUserCreationHandled] = useState(false);
   const router = useRouter();
   const pathname = usePathname();
 
@@ -118,6 +119,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
               tradingExperience: '',
             });
             console.log("User data saved successfully");
+            setUserCreationHandled(true);
           } catch (saveError) {
             console.error("Error saving user data:", saveError);
           }
@@ -160,6 +162,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         try {
           await saveUserDataViaAPI(userCredential.user, additionalData);
           console.log("User data saved via API");
+          setUserCreationHandled(true);
         } catch (saveError) {
           console.error("Error saving user data:", saveError);
         }
@@ -185,12 +188,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const completeOnboarding = () => {
     setShowOnboarding(false);
+    setUserCreationHandled(false); // Reset flag after onboarding
     // Redirect to brokerage connection
     router.push('/settings?connect=true');
   };
 
   const skipOnboarding = () => {
     setShowOnboarding(false);
+    setUserCreationHandled(false); // Reset flag after skipping
     // Go to dashboard without brokerage connection
     router.push('/dashboard');
   };
@@ -203,7 +208,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setUser(currentUser);
       
       // Check if existing user needs onboarding via API (only for existing sessions)
-      if (currentUser) {
+      if (currentUser && !userCreationHandled) {
         // Only check onboarding for users who are already signed in (not during signup/login flow)
         // This prevents double-checking during the signup/login process
         setTimeout(async () => {
@@ -220,6 +225,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             console.error('Error checking onboarding status:', error);
           }
         }, 1000); // Small delay to avoid conflicts with signup/login flows
+      } else if (!currentUser) {
+        // Reset the flag when user logs out
+        setUserCreationHandled(false);
       }
       
       setLoading(false);

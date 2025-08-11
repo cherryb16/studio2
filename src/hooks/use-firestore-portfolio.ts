@@ -9,7 +9,7 @@ import {
   PortfolioService, 
   AnalyticsService 
 } from '@/lib/firestore-service';
-import { SnapTradeFirestoreSync } from '@/lib/snaptrade-firestore-sync';
+// Removed import of SnapTradeFirestoreSync to prevent client-side Firebase Admin SDK errors
 import { 
   FirestorePosition, 
   FirestoreTrade, 
@@ -282,12 +282,25 @@ export function useDataSync() {
     setError(null);
 
     try {
-      const result = await SnapTradeFirestoreSync.quickSync({
-        userId: user.uid,
-        ...credentials
+      // Use API route instead of direct Firebase Admin SDK
+      const token = await user.getIdToken();
+      const response = await fetch('/api/sync-firestore', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          userId: user.uid,
+          snaptradeUserId: credentials.snaptradeUserId,
+          userSecret: credentials.userSecret,
+          fullSync: false
+        }),
       });
 
-      if (result.success) {
+      const result = await response.json();
+      
+      if (response.ok && result.success) {
         setLastSync(new Date());
       } else {
         setError(result.error || 'Sync failed');
@@ -309,12 +322,25 @@ export function useDataSync() {
     setError(null);
 
     try {
-      const result = await SnapTradeFirestoreSync.fullSync({
-        userId: user.uid,
-        ...credentials
+      // Use API route instead of direct Firebase Admin SDK
+      const token = await user.getIdToken();
+      const response = await fetch('/api/sync-firestore', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          userId: user.uid,
+          snaptradeUserId: credentials.snaptradeUserId,
+          userSecret: credentials.userSecret,
+          fullSync: true
+        }),
       });
 
-      if (result.success) {
+      const result = await response.json();
+      
+      if (response.ok && result.success) {
         setLastSync(new Date());
       } else {
         setError(result.error || 'Full sync failed');

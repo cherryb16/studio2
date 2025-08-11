@@ -1,7 +1,7 @@
 // src/app/(app)/settings/page.tsx
 'use client';
 
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { ConnectBrokerageButton } from '@/components/connect-brokerage-button';
 import { SubscriptionManagement } from '@/components/subscription-management';
@@ -17,6 +17,8 @@ const SettingsPage = () => {
   const { accounts, isLoading: accountsLoading } = useCachedAccounts();
   const [userProfile, setUserProfile] = useState<any>(null);
   const [profileLoading, setProfileLoading] = useState(true);
+  const [resetOnboardingLoading, setResetOnboardingLoading] = useState(false);
+  const [syncLoading, setSyncLoading] = useState(false);
   const router = useRouter();
   const searchParams = useSearchParams();
   const connectButtonRef = useRef<HTMLButtonElement>(null);
@@ -53,6 +55,74 @@ const SettingsPage = () => {
     }
   }, [searchParams]);
 
+  const handleSyncData = useCallback(async () => {
+    if (!user) return;
+    
+    setSyncLoading(true);
+    try {
+      const response = await fetch('/api/sync-data', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId: user.uid }),
+      });
+      
+      const result = await response.json();
+      if (response.ok) {
+        // Show success message or refresh data
+        console.log('Sync completed:', result.message);
+        // Optionally refresh the page or update the UI
+        window.location.reload();
+      } else {
+        console.error('Sync failed:', result.error);
+      }
+    } catch (error) {
+      console.error('Error syncing data:', error);
+    } finally {
+      setSyncLoading(false);
+    }
+  }, [user]);
+
+  // Auto-trigger data sync after successful account connection
+  useEffect(() => {
+    const status = searchParams?.get('status');
+    const connectionId = searchParams?.get('connection_id');
+    
+    if (status === 'SUCCESS' && connectionId && user?.uid) {
+      console.log(`SnapTrade connection successful! Connection ID: ${connectionId}`);
+      console.log('Triggering automatic data sync...');
+      
+      // Trigger sync after a short delay to ensure credentials are saved
+      setTimeout(() => {
+        handleSyncData();
+      }, 2000); // 2 second delay to ensure credentials are stored
+    }
+  }, [searchParams, user?.uid, handleSyncData]);
+
+  const handleResetOnboarding = async () => {
+    if (!user) return;
+    if (!confirm('This will reset your trading profile and you\'ll need to complete the onboarding again. Continue?')) return;
+    
+    setResetOnboardingLoading(true);
+    try {
+      const response = await fetch('/api/firebase/resetOnboarding', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId: user.uid }),
+      });
+      
+      if (response.ok) {
+        // Refresh the page to trigger onboarding
+        window.location.reload();
+      } else {
+        console.error('Failed to reset onboarding');
+      }
+    } catch (error) {
+      console.error('Error resetting onboarding:', error);
+    } finally {
+      setResetOnboardingLoading(false);
+    }
+  };
+
   const handleDelete = async () => {
     if (!user) return;
     if (!confirm('This will permanently delete your account. Continue?')) return;
@@ -87,9 +157,19 @@ const SettingsPage = () => {
             {profileLoading ? (
               <Skeleton className="h-4 w-24 ml-2 inline-block" />
             ) : (
-              <Badge variant="secondary" className="ml-2">
-                {userProfile?.tradingExperience || 'Not set'}
-              </Badge>
+              <div className="flex items-center gap-2 mt-1">
+                <Badge variant="secondary">
+                  {userProfile?.tradingExperience || 'Not set'}
+                </Badge>
+                <Button 
+                  variant="outline" 
+                  size="sm"
+                  onClick={handleResetOnboarding}
+                  disabled={resetOnboardingLoading}
+                >
+                  {resetOnboardingLoading ? 'Resetting...' : 'Retake Assessment'}
+                </Button>
+              </div>
             )}
           </div>
           
@@ -128,9 +208,24 @@ const SettingsPage = () => {
         <CardHeader>
           <CardTitle>Brokerage Connection</CardTitle>
         </CardHeader>
-        <CardContent className="space-y-2">
+        <CardContent className="space-y-4">
           <p>Connect your brokerage account to enable trading features.</p>
           <ConnectBrokerageButton ref={connectButtonRef} />
+          
+          {accounts.length > 0 && (
+            <div className="pt-4 border-t">
+              <p className="text-sm text-muted-foreground mb-2">
+                Sync your trading data to Firestore for faster performance
+              </p>
+              <Button 
+                variant="secondary" 
+                onClick={handleSyncData}
+                disabled={syncLoading}
+              >
+                {syncLoading ? 'Syncing...' : 'Sync Trading Data'}
+              </Button>
+            </div>
+          )}
         </CardContent>
       </Card>
 

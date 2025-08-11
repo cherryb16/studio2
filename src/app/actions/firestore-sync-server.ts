@@ -11,8 +11,16 @@ interface SnapTradeCredentials {
   userSecret: string;
 }
 
-export async function serverSyncPositions(credentials: SnapTradeCredentials): Promise<number> {
+export async function serverSyncPositions(credentials: SnapTradeCredentials, clearExisting = false): Promise<number> {
   console.log(`Fetching positions for user ${credentials.userId} with SnapTrade ID ${credentials.snaptradeUserId}`);
+  
+  const adminDb = getDb();
+  
+  // Clear existing positions if requested (for full sync)
+  if (clearExisting) {
+    console.log('Clearing existing positions for full sync...');
+    await clearUserPositions(adminDb, credentials.userId);
+  }
   
   const positions = await getAllPositions(
     credentials.snaptradeUserId,
@@ -24,10 +32,12 @@ export async function serverSyncPositions(credentials: SnapTradeCredentials): Pr
   }
 
   console.log(`Retrieved ${positions.length} positions from SnapTrade API`);
-
-  const adminDb = getDb();
   const batch = adminDb.batch();
   const now = new Date();
+  
+  // Track position IDs to detect duplicates
+  const positionIds = new Set<string>();
+  const duplicateIds: string[] = [];
 
   positions.forEach(pos => {
     // Extract symbol string based on SnapTrade API structure
@@ -49,8 +59,6 @@ export async function serverSyncPositions(credentials: SnapTradeCredentials): Pr
       symbol = pos.symbol;
     }
     
-    console.log(`Processing position: symbol="${symbol}", units=${pos.units}, price=${pos.price}, hasOptionSymbol=${!!pos.symbol?.option_symbol}`);
-
     const marketValue = (pos.units || 0) * (pos.price || 0);
     const unrealizedPnL = pos.open_pnl || 0; // SnapTrade uses 'open_pnl' not 'unrealized_pnl'
     const isOption = !!pos.symbol?.option_symbol; // Options have option_symbol property
@@ -60,13 +68,33 @@ export async function serverSyncPositions(credentials: SnapTradeCredentials): Pr
     console.log(`Account ID for position ${symbol}: ${accountId}`);
     
     const positionId = isOption ? 
-      `${symbol}_${pos.symbol.option_symbol.strike_price || 0}_${pos.symbol.option_symbol.expiration_date || ''}_${pos.symbol.option_symbol.option_type || 'CALL'}_${accountId}` :
+      `${symbol}_${pos.symbol?.option_symbol?.strike_price || 0}_${pos.symbol?.option_symbol?.expiration_date || ''}_${pos.symbol?.option_symbol?.option_type || 'CALL'}_${accountId}` :
       `${symbol}_${accountId}`;
+
+    // Check for duplicate position IDs
+    if (positionIds.has(positionId)) {
+      duplicateIds.push(positionId);
+      console.warn(`DUPLICATE POSITION ID DETECTED: ${positionId} for symbol "${symbol}"`);
+    } else {
+      positionIds.add(positionId);
+    }
+    
+    console.log(`Processing position: symbol="${symbol}", units=${pos.units}, price=${pos.price}, hasOptionSymbol=${!!pos.symbol?.option_symbol}, positionId="${positionId}"`);
+    
+    if (isOption) {
+      console.log('OPTION POSITION DETAILS:');
+      console.log('- Option symbol structure:', JSON.stringify(pos.symbol?.option_symbol, null, 2));
+      console.log('- Strike price:', pos.symbol?.option_symbol?.strike_price);
+      console.log('- Expiration date:', pos.symbol?.option_symbol?.expiration_date);
+      console.log('- Option type:', pos.symbol?.option_symbol?.option_type);
+    }
+    
+    console.log('Raw position symbol object:', JSON.stringify(pos.symbol, null, 2));
 
     const basePosition: any = {
       id: positionId,
       userId: credentials.userId,
-      symbol,
+      symbol: typeof symbol === 'string' ? symbol : String(symbol), // Ensure it's always a string
       accountId: pos.account?.id || 'default',
       
       units: pos.units || 0,
@@ -95,19 +123,57 @@ export async function serverSyncPositions(credentials: SnapTradeCredentials): Pr
 
     // Use simplified structure: snaptrade_users/{userId}/positions_options/{positionId} or snaptrade_users/{userId}/positions_equities/{positionId}
     const collectionName = isOption ? 'positions_options' : 'positions_equities';
+    console.log(`Saving to collection: ${collectionName} with ID: ${positionId}`);
+    
     const docRef = adminDb
       .collection('snaptrade_users')
       .doc(credentials.userId)
       .collection(collectionName)
       .doc(positionId);
-    batch.set(docRef, cleanObject(basePosition));
+    const cleanedPosition = cleanObject(basePosition);
+    console.log(`About to save position with symbol: "${cleanedPosition.symbol}" (type: ${typeof cleanedPosition.symbol})`);
+    if (typeof cleanedPosition.symbol === 'object') {
+      console.error('ERROR: Symbol is still an object!', JSON.stringify(cleanedPosition.symbol, null, 2));
+    }
+    batch.set(docRef, cleanedPosition);
   });
 
+  // Count positions by type
+  let optionCount = 0;
+  let equityCount = 0;
+  positions.forEach(pos => {
+    if (!!pos.symbol?.option_symbol) {
+      optionCount++;
+    } else {
+      equityCount++;
+    }
+  });
+  
+  // Log summary before committing
+  console.log(`Position sync summary:`);
+  console.log(`- Total positions processed: ${positions.length}`);
+  console.log(`- Option positions: ${optionCount}`);
+  console.log(`- Equity positions: ${equityCount}`);
+  console.log(`- Unique position IDs: ${positionIds.size}`);
+  console.log(`- Duplicate IDs detected: ${duplicateIds.length}`);
+  if (duplicateIds.length > 0) {
+    console.log(`- Duplicate IDs: ${JSON.stringify(duplicateIds)}`);
+  }
+
   await batch.commit();
+  console.log(`Batch committed successfully. Should have ${positionIds.size} positions in Firestore.`);
   return positions.length;
 }
 
-export async function serverSyncTrades(credentials: SnapTradeCredentials, daysBack = 90): Promise<number> {
+export async function serverSyncTrades(credentials: SnapTradeCredentials, daysBack = 90, clearExisting = false): Promise<number> {
+  const adminDb = getDb();
+  
+  // Clear existing trades if requested (for full sync)
+  if (clearExisting) {
+    console.log('Clearing existing trades for full sync...');
+    await clearUserTrades(adminDb, credentials.userId);
+  }
+  
   const startDate = new Date();
   startDate.setDate(startDate.getDate() - daysBack);
 
@@ -121,7 +187,6 @@ export async function serverSyncTrades(credentials: SnapTradeCredentials, daysBa
     throw new Error(`Failed to fetch trades: ${tradesResult.error}`);
   }
 
-  const adminDb = getDb();
   const batch = adminDb.batch();
   const now = new Date();
 
@@ -235,10 +300,10 @@ export async function serverFullSync(credentials: SnapTradeCredentials) {
   try {
     console.log(`Starting full sync for user ${credentials.userId}`);
     
-    // Run all syncs in parallel for speed
+    // For full sync, clear existing data first, then sync everything
     const [positions, trades] = await Promise.all([
-      serverSyncPositions(credentials),
-      serverSyncTrades(credentials),
+      serverSyncPositions(credentials, true), // true = clear existing positions
+      serverSyncTrades(credentials, 90, true), // true = clear existing trades
       serverSyncPortfolioSummary(credentials)
     ]);
 
@@ -276,6 +341,64 @@ function cleanObject(obj: any): any {
     }
   });
   return cleaned;
+}
+
+// Helper function to clear all existing positions for a user
+async function clearUserPositions(adminDb: any, userId: string) {
+  const batch = adminDb.batch();
+  
+  // Get all existing positions from both collections
+  const [optionsSnapshot, equitiesSnapshot] = await Promise.all([
+    adminDb.collection('snaptrade_users')
+      .doc(userId)
+      .collection('positions_options')
+      .get(),
+    adminDb.collection('snaptrade_users')
+      .doc(userId)
+      .collection('positions_equities')
+      .get()
+  ]);
+  
+  // Add deletions to batch
+  optionsSnapshot.docs.forEach((doc: any) => {
+    batch.delete(doc.ref);
+  });
+  
+  equitiesSnapshot.docs.forEach((doc: any) => {
+    batch.delete(doc.ref);
+  });
+  
+  const totalToDelete = optionsSnapshot.size + equitiesSnapshot.size;
+  if (totalToDelete > 0) {
+    console.log(`Deleting ${totalToDelete} existing positions (${optionsSnapshot.size} options, ${equitiesSnapshot.size} equities)`);
+    await batch.commit();
+  } else {
+    console.log('No existing positions to clear');
+  }
+}
+
+// Helper function to clear all existing trades for a user
+async function clearUserTrades(adminDb: any, userId: string) {
+  const batch = adminDb.batch();
+  
+  // Get all existing trades
+  const tradesSnapshot = await adminDb.collection('snaptrade_users')
+    .doc(userId)
+    .collection('trades')
+    .get();
+  
+  // Add deletions to batch
+  tradesSnapshot.docs.forEach((doc: any) => {
+    batch.delete(doc.ref);
+  });
+  
+  const totalToDelete = tradesSnapshot.size;
+  if (totalToDelete > 0) {
+    console.log(`Deleting ${totalToDelete} existing trades`);
+    await batch.commit();
+  } else {
+    console.log('No existing trades to clear');
+  }
 }
 
 // Helper function

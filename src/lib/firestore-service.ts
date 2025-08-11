@@ -71,8 +71,16 @@ export class PositionService {
       ))
     ]);
     
-    const options = optionsSnapshot.docs.map(doc => doc.data() as FirestorePosition);
-    const equities = equitiesSnapshot.docs.map(doc => doc.data() as FirestorePosition);
+    const options = optionsSnapshot.docs.map(doc => {
+      const data = doc.data() as FirestorePosition;
+      console.log(`Reading option position: ${doc.id}, symbol type: ${typeof data.symbol}`, data.symbol);
+      return data;
+    });
+    const equities = equitiesSnapshot.docs.map(doc => {
+      const data = doc.data() as FirestorePosition;
+      console.log(`Reading equity position: ${doc.id}, symbol type: ${typeof data.symbol}`, data.symbol);
+      return data;
+    });
     
     // Combine and sort by market value, then take top N
     const allPositions = [...options, ...equities];
