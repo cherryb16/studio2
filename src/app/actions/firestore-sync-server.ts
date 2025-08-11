@@ -12,13 +12,11 @@ interface SnapTradeCredentials {
 }
 
 export async function serverSyncPositions(credentials: SnapTradeCredentials, clearExisting = false): Promise<number> {
-  console.log(`Fetching positions for user ${credentials.userId} with SnapTrade ID ${credentials.snaptradeUserId}`);
   
   const adminDb = getDb();
   
   // Clear existing positions if requested (for full sync)
   if (clearExisting) {
-    console.log('Clearing existing positions for full sync...');
     await clearUserPositions(adminDb, credentials.userId);
   }
   
@@ -31,7 +29,6 @@ export async function serverSyncPositions(credentials: SnapTradeCredentials, cle
     throw new Error(`Failed to fetch positions: ${positions.error}`);
   }
 
-  console.log(`Retrieved ${positions.length} positions from SnapTrade API`);
   const batch = adminDb.batch();
   const now = new Date();
   
@@ -39,7 +36,7 @@ export async function serverSyncPositions(credentials: SnapTradeCredentials, cle
   const positionIds = new Set<string>();
   const duplicateIds: string[] = [];
 
-  positions.forEach(pos => {
+  positions.forEach((pos: any) => {
     // Extract symbol string based on SnapTrade API structure
     let symbol = 'UNKNOWN';
     
@@ -65,7 +62,6 @@ export async function serverSyncPositions(credentials: SnapTradeCredentials, cle
     
     // Generate unique position ID with proper account ID
     const accountId = pos.account?.id || pos.accountId || 'default';
-    console.log(`Account ID for position ${symbol}: ${accountId}`);
     
     const positionId = isOption ? 
       `${symbol}_${pos.symbol?.option_symbol?.strike_price || 0}_${pos.symbol?.option_symbol?.expiration_date || ''}_${pos.symbol?.option_symbol?.option_type || 'CALL'}_${accountId}` :
@@ -74,22 +70,11 @@ export async function serverSyncPositions(credentials: SnapTradeCredentials, cle
     // Check for duplicate position IDs
     if (positionIds.has(positionId)) {
       duplicateIds.push(positionId);
-      console.warn(`DUPLICATE POSITION ID DETECTED: ${positionId} for symbol "${symbol}"`);
     } else {
       positionIds.add(positionId);
     }
     
-    console.log(`Processing position: symbol="${symbol}", units=${pos.units}, price=${pos.price}, hasOptionSymbol=${!!pos.symbol?.option_symbol}, positionId="${positionId}"`);
     
-    if (isOption) {
-      console.log('OPTION POSITION DETAILS:');
-      console.log('- Option symbol structure:', JSON.stringify(pos.symbol?.option_symbol, null, 2));
-      console.log('- Strike price:', pos.symbol?.option_symbol?.strike_price);
-      console.log('- Expiration date:', pos.symbol?.option_symbol?.expiration_date);
-      console.log('- Option type:', pos.symbol?.option_symbol?.option_type);
-    }
-    
-    console.log('Raw position symbol object:', JSON.stringify(pos.symbol, null, 2));
 
     const basePosition: any = {
       id: positionId,
@@ -123,7 +108,6 @@ export async function serverSyncPositions(credentials: SnapTradeCredentials, cle
 
     // Use simplified structure: snaptrade_users/{userId}/positions_options/{positionId} or snaptrade_users/{userId}/positions_equities/{positionId}
     const collectionName = isOption ? 'positions_options' : 'positions_equities';
-    console.log(`Saving to collection: ${collectionName} with ID: ${positionId}`);
     
     const docRef = adminDb
       .collection('snaptrade_users')
@@ -131,17 +115,13 @@ export async function serverSyncPositions(credentials: SnapTradeCredentials, cle
       .collection(collectionName)
       .doc(positionId);
     const cleanedPosition = cleanObject(basePosition);
-    console.log(`About to save position with symbol: "${cleanedPosition.symbol}" (type: ${typeof cleanedPosition.symbol})`);
-    if (typeof cleanedPosition.symbol === 'object') {
-      console.error('ERROR: Symbol is still an object!', JSON.stringify(cleanedPosition.symbol, null, 2));
-    }
     batch.set(docRef, cleanedPosition);
   });
 
   // Count positions by type
   let optionCount = 0;
   let equityCount = 0;
-  positions.forEach(pos => {
+  positions.forEach((pos: any) => {
     if (!!pos.symbol?.option_symbol) {
       optionCount++;
     } else {
@@ -149,19 +129,8 @@ export async function serverSyncPositions(credentials: SnapTradeCredentials, cle
     }
   });
   
-  // Log summary before committing
-  console.log(`Position sync summary:`);
-  console.log(`- Total positions processed: ${positions.length}`);
-  console.log(`- Option positions: ${optionCount}`);
-  console.log(`- Equity positions: ${equityCount}`);
-  console.log(`- Unique position IDs: ${positionIds.size}`);
-  console.log(`- Duplicate IDs detected: ${duplicateIds.length}`);
-  if (duplicateIds.length > 0) {
-    console.log(`- Duplicate IDs: ${JSON.stringify(duplicateIds)}`);
-  }
 
   await batch.commit();
-  console.log(`Batch committed successfully. Should have ${positionIds.size} positions in Firestore.`);
   return positions.length;
 }
 
@@ -170,7 +139,6 @@ export async function serverSyncTrades(credentials: SnapTradeCredentials, daysBa
   
   // Clear existing trades if requested (for full sync)
   if (clearExisting) {
-    console.log('Clearing existing trades for full sync...');
     await clearUserTrades(adminDb, credentials.userId);
   }
   
@@ -298,7 +266,6 @@ export async function serverSyncPortfolioSummary(credentials: SnapTradeCredentia
 
 export async function serverFullSync(credentials: SnapTradeCredentials) {
   try {
-    console.log(`Starting full sync for user ${credentials.userId}`);
     
     // For full sync, clear existing data first, then sync everything
     const [positions, trades] = await Promise.all([
@@ -307,7 +274,6 @@ export async function serverFullSync(credentials: SnapTradeCredentials) {
       serverSyncPortfolioSummary(credentials)
     ]);
 
-    console.log(`Full sync completed: ${positions} positions, ${trades} trades`);
     return { positions, trades, success: true };
     
   } catch (error) {
@@ -323,7 +289,6 @@ export async function serverQuickSync(credentials: SnapTradeCredentials) {
       serverSyncPortfolioSummary(credentials)
     ]);
 
-    console.log(`Quick sync completed: ${positions} positions`);
     return { positions, success: true };
     
   } catch (error) {
@@ -370,10 +335,8 @@ async function clearUserPositions(adminDb: any, userId: string) {
   
   const totalToDelete = optionsSnapshot.size + equitiesSnapshot.size;
   if (totalToDelete > 0) {
-    console.log(`Deleting ${totalToDelete} existing positions (${optionsSnapshot.size} options, ${equitiesSnapshot.size} equities)`);
     await batch.commit();
   } else {
-    console.log('No existing positions to clear');
   }
 }
 
@@ -394,10 +357,8 @@ async function clearUserTrades(adminDb: any, userId: string) {
   
   const totalToDelete = tradesSnapshot.size;
   if (totalToDelete > 0) {
-    console.log(`Deleting ${totalToDelete} existing trades`);
     await batch.commit();
   } else {
-    console.log('No existing trades to clear');
   }
 }
 

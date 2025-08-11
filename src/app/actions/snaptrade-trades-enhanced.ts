@@ -171,7 +171,6 @@ function convertToEnhancedTrade(activity: any): EnhancedTradeActivity {
 
 // Convert SnapTrade activity to analytics activity
 function convertToAnalyticsActivity(activity: any): AnalyticsActivity {
-  console.log('Converting activity:', activity);
   
   // Calculate amount based on activity type and available fields
   let amount = 0;
@@ -271,7 +270,6 @@ export async function getEnhancedTradeActivities(
     // Paginated fetch for trade activities to handle 1000+ trades
     const fetchTradeActivitiesWithPagination = async (currentEndDate?: Date): Promise<boolean> => {
       try {
-        console.log(`=== Fetching TRADE activities ${currentEndDate ? `(paginated, endDate: ${currentEndDate.toISOString().split('T')[0]})` : '(initial)'} ===`);
         const activitiesResponse = await snaptrade.transactionsAndReporting.getActivities({
           userId: snaptradeUserId,
           userSecret: userSecret,
@@ -282,12 +280,9 @@ export async function getEnhancedTradeActivities(
         });
 
         if (activitiesResponse.data && Array.isArray(activitiesResponse.data) && activitiesResponse.data.length > 0) {
-          console.log(`✅ SUCCESS: Found ${activitiesResponse.data.length} trade activities`);
-          
           // Add activities, avoiding duplicates based on id
           const existingIds = new Set(allActivities.map(a => a.id));
           const newActivities = activitiesResponse.data.filter(activity => !existingIds.has(activity.id));
-          console.log(`Adding ${newActivities.length} new activities (${activitiesResponse.data.length - newActivities.length} duplicates filtered)`);
           
           const enhancedTrades = newActivities.map(convertToEnhancedTrade);
           allActivities.push(...enhancedTrades);
@@ -295,17 +290,13 @@ export async function getEnhancedTradeActivities(
           // Return true if we got the maximum (1000) activities, indicating more pages might exist
           return activitiesResponse.data.length === 1000;
         } else {
-          console.log('No more trade activities found');
           return false;
         }
       } catch (error) {
-        console.error('Error fetching trade activities from SnapTrade API:', error);
         throw error;
       }
     };
 
-    // Initial fetch
-    console.log('=== Starting paginated trade fetch ===');
     let hasMorePages = await fetchTradeActivitiesWithPagination();
     let pageCount = 1;
     
@@ -322,7 +313,6 @@ export async function getEnhancedTradeActivities(
       const oldestTrade = allActivities[allActivities.length - 1];
       const oldestTradeDate = oldestTrade.executedAt;
       
-      console.log(`=== Fetching trade page ${pageCount} (trades before ${oldestTradeDate.toISOString().split('T')[0]}) ===`);
       
       // Subtract 1 day to avoid getting the same last transaction
       const nextEndDate = new Date(oldestTradeDate);
@@ -330,14 +320,12 @@ export async function getEnhancedTradeActivities(
       
       // Check if we've gone past our start date filter
       if (startDate && nextEndDate < startDate) {
-        console.log('Reached start date limit, stopping trade pagination');
         break;
       }
       
       hasMorePages = await fetchTradeActivitiesWithPagination(nextEndDate);
     }
     
-    console.log(`=== Trade pagination complete: ${pageCount} pages, ${allActivities.length} total trade activities ===`);
 
     // Sort by execution date, most recent first
     allActivities.sort((a, b) => b.executedAt.getTime() - a.executedAt.getTime());
@@ -347,7 +335,6 @@ export async function getEnhancedTradeActivities(
 
     return processedTrades;
   } catch (error) {
-    console.error('Error getting enhanced trade activities:', error);
     return { error: 'Failed to get enhanced trade activities.' };
   }
 }
@@ -360,14 +347,6 @@ export async function getAnalyticsActivities(
   endDate?: Date,
   accountId?: string
 ): Promise<AnalyticsActivity[] | { error: string }> {
-  console.log('=== Starting getAnalyticsActivities ===');
-  console.log('Parameters:', {
-    snaptradeUserId,
-    userSecret: userSecret ? `${userSecret.substring(0, 8)}...` : 'undefined',
-    startDate: startDate?.toISOString(),
-    endDate: endDate?.toISOString(),
-    accountId
-  });
 
   try {
     // Get all accounts if no specific account ID is provided
@@ -375,26 +354,20 @@ export async function getAnalyticsActivities(
     
     if (accountId) {
       accountIds = [accountId];
-      console.log('Using specific account ID:', accountId);
     } else {
-      console.log('Fetching all user accounts...');
       const accountsResponse = await snaptrade.accountInformation.listUserAccounts({
         userId: snaptradeUserId,
         userSecret: userSecret,
       });
-      console.log('Accounts response:', accountsResponse);
       
       if (accountsResponse.data && Array.isArray(accountsResponse.data)) {
         accountIds = accountsResponse.data.map(acc => acc.id);
-        console.log('Extracted account IDs:', accountIds);
       } else {
-        console.error('No accounts found or invalid response format');
         return { error: 'No accounts found' };
       }
     }
 
     if (accountIds.length === 0) {
-      console.error('No account IDs available');
       return { error: 'No account IDs available' };
     }
 
@@ -426,36 +399,22 @@ export async function getAnalyticsActivities(
 
       for (const attempt of attempts) {
         try {
-          console.log(`=== Attempting: ${attempt.name} ${currentEndDate ? `(paginated, endDate: ${currentEndDate.toISOString().split('T')[0]})` : '(initial)'} ===`);
-          console.log('Request parameters:', {
-            ...attempt.params,
-            userSecret: userSecret ? `${userSecret.substring(0, 8)}...` : 'undefined'
-          });
           
           const activitiesResponse = await snaptrade.transactionsAndReporting.getActivities(attempt.params);
 
-          console.log('=== Activities API Response ===');
-          console.log('Response status:', activitiesResponse.status);
-          console.log('Response data type:', typeof activitiesResponse.data);
-          console.log('Response data length:', Array.isArray(activitiesResponse.data) ? activitiesResponse.data.length : 'not array');
           
           if (activitiesResponse.data && Array.isArray(activitiesResponse.data) && activitiesResponse.data.length > 0) {
-            console.log(`✅ SUCCESS: Found ${activitiesResponse.data.length} activities with ${attempt.name}`);
-            
             // Add activities, avoiding duplicates based on id
             const existingIds = new Set(allActivities.map(a => a.id));
             const newActivities = activitiesResponse.data.filter(activity => !existingIds.has(activity.id));
-            console.log(`Adding ${newActivities.length} new activities (${activitiesResponse.data.length - newActivities.length} duplicates filtered)`);
             
             allActivities.push(...newActivities);
             
             // Return true if we got the maximum (1000) activities, indicating more pages might exist
             return activitiesResponse.data.length === 1000;
           } else {
-            console.log(`❌ ${attempt.name} returned empty or invalid data:`, activitiesResponse.data);
           }
         } catch (attemptError) {
-          console.error(`❌ Error with ${attempt.name}:`, attemptError);
           continue; // Try next approach
         }
       }
@@ -463,8 +422,6 @@ export async function getAnalyticsActivities(
       return false; // No successful request found
     };
 
-    // Initial fetch
-    console.log('=== Starting paginated fetch ===');
     let hasMorePages = await fetchActivitiesWithPagination();
     let pageCount = 1;
     
@@ -483,7 +440,6 @@ export async function getAnalyticsActivities(
       const oldestActivity = allActivities[allActivities.length - 1];
       const oldestActivityDate = new Date(oldestActivity.trade_date || oldestActivity.settlement_date || '');
       
-      console.log(`=== Fetching page ${pageCount} (activities before ${oldestActivityDate.toISOString().split('T')[0]}) ===`);
       
       // Subtract 1 day to avoid getting the same last transaction
       const nextEndDate = new Date(oldestActivityDate);
@@ -491,28 +447,19 @@ export async function getAnalyticsActivities(
       
       // Check if we've gone past our start date filter
       if (startDate && nextEndDate < startDate) {
-        console.log('Reached start date limit, stopping pagination');
         break;
       }
       
       hasMorePages = await fetchActivitiesWithPagination(nextEndDate);
     }
     
-    console.log(`=== Pagination complete: ${pageCount} pages, ${allActivities.length} total activities ===`);
 
     if (allActivities.length === 0) {
-      console.warn('=== No activities found after all attempts ===');
-      console.log('This could mean:');
-      console.log('1. No activity in the specified date range');
-      console.log('2. Account has no activity history');
-      console.log('3. API credentials may not have access to activity data');
-      console.log('4. SnapTrade API may be returning data in a different format');
       
       // Don't return an error if we simply have no activities - this is valid
       return [];
     }
 
-    console.log(`Total activities fetched: ${allActivities.length}`);
 
     // Filter to only non-trading activities
     const nonTradingTypes = ['DIVIDEND', 'CONTRIBUTION', 'WITHDRAWAL', 'REI', 'STOCK_DIVIDEND', 'INTEREST', 'FEE', 'TRANSFER'];
@@ -520,7 +467,6 @@ export async function getAnalyticsActivities(
       nonTradingTypes.includes(activity.type)
     );
 
-    console.log(`Filtered to ${nonTradingActivities.length} non-trading activities`);
 
     // Convert to analytics activities
     const analyticsActivities = nonTradingActivities.map(convertToAnalyticsActivity);
@@ -528,10 +474,8 @@ export async function getAnalyticsActivities(
     // Sort by execution date, most recent first
     analyticsActivities.sort((a, b) => b.executedAt.getTime() - a.executedAt.getTime());
 
-    console.log(`=== End getAnalyticsActivities: ${analyticsActivities.length} activities ===`);
     return analyticsActivities;
   } catch (error) {
-    console.error('Error getting analytics activities:', error);
     return { error: 'Failed to get analytics activities.' };
   }
 }
@@ -746,7 +690,6 @@ export async function getTradesSummaryStats(
 
     return stats;
   } catch (error) {
-    console.error('Error getting trade summary stats:', error);
     return { error: 'Failed to get trade summary stats.' };
   }
 }
@@ -841,7 +784,6 @@ export async function getAnalyticsSummaryStats(
 
     return stats;
   } catch (error) {
-    console.error('Error getting analytics summary stats:', error);
     return { error: 'Failed to get analytics summary stats.' };
   }
 }

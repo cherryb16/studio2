@@ -48,4 +48,4 @@ firebase-service-account.json
 functions/node_modules/
 functions/.next/
 functions/lib/
-functions/*.tsbuildinfo
+functions/*.tsbuildinfotrading-data-key.json

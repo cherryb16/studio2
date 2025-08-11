@@ -75,14 +75,6 @@ export async function getSnapTradeTrades(
   endDate?: Date,
   accountId?: string
 ) {
-  console.log('=== Starting getSnapTradeTrades ===');
-  console.log('Input parameters:', {
-    snaptradeUserId,
-    userSecret: userSecret ? `${userSecret.substring(0, 8)}...` : 'undefined',
-    startDate: startDate?.toISOString(),
-    endDate: endDate?.toISOString(),
-    accountId
-  });
 
   try {
     // Get all accounts if not specified
@@ -92,17 +84,15 @@ export async function getSnapTradeTrades(
       accountIds = [accountId];
       console.log('Using specific account ID:', accountId);
     } else {
-      console.log('Fetching all user accounts...');
       const accountsResponse = await snaptrade.accountInformation.listUserAccounts({
         userId: snaptradeUserId,
         userSecret: userSecret,
       });
-      console.log('Accounts response:', accountsResponse);
-      console.log('Accounts data:', accountsResponse.data);
+      // Accounts response logged (verbose logging removed)
       
       if (accountsResponse.data && Array.isArray(accountsResponse.data)) {
         accountIds = accountsResponse.data.map(acc => acc.id);
-        console.log('Extracted account IDs:', accountIds);
+        // Extracted account IDs (verbose logging removed)
       } else {
         console.error('No accounts found or invalid response format');
         return { error: 'No accounts found' };
@@ -159,21 +149,9 @@ export async function getSnapTradeTrades(
 
       for (const attempt of attempts) {
         try {
-          console.log(`=== Attempting: ${attempt.name} ${currentEndDate ? `(paginated, endDate: ${currentEndDate.toISOString().split('T')[0]})` : '(initial)'} ===`);
-          console.log('Request parameters:', {
-            ...attempt.params,
-            userSecret: userSecret ? `${userSecret.substring(0, 8)}...` : 'undefined'
-          });
-          
           const activitiesResponse = await snaptrade.transactionsAndReporting.getActivities(attempt.params);
-
-          console.log('=== Activities API Response ===');
-          console.log('Response status:', activitiesResponse.status);
-          console.log('Response data type:', typeof activitiesResponse.data);
-          console.log('Response data length:', Array.isArray(activitiesResponse.data) ? activitiesResponse.data.length : 'not array');
           
           if (activitiesResponse.data && Array.isArray(activitiesResponse.data) && activitiesResponse.data.length > 0) {
-            console.log(`✅ SUCCESS: Found ${activitiesResponse.data.length} activities with ${attempt.name}`);
             
             // Filter for trade types if we got all activities
             const tradeActivities = attempt.name.includes('All activities') 
@@ -182,7 +160,6 @@ export async function getSnapTradeTrades(
                 )
               : activitiesResponse.data;
               
-            console.log(`Filtered to ${tradeActivities.length} trade activities`);
 
             // Deduplicate trades based on ID
             const existingTradeIds = new Set(allTrades.map(t => t.id));
@@ -198,8 +175,6 @@ export async function getSnapTradeTrades(
             
             // Return true if we got the maximum (1000) trades, indicating more pages might exist
             return activitiesResponse.data.length === 1000;
-          } else {
-            console.log(`❌ ${attempt.name} returned empty or invalid data:`, activitiesResponse.data);
           }
         } catch (attemptError) {
           console.error(`❌ Error with ${attempt.name}:`, attemptError);
@@ -211,7 +186,6 @@ export async function getSnapTradeTrades(
     };
 
     // Initial fetch
-    console.log('=== Starting paginated fetch ===');
     let hasMorePages = await fetchTradesWithPagination();
     let pageCount = 1;
     
@@ -232,15 +206,12 @@ export async function getSnapTradeTrades(
       const oldestTrade = allTrades[allTrades.length - 1];
       const oldestTradeDate = new Date(format(new Date(oldestTrade.trade_date || ''), 'yyyy-MM-dd'));
       
-      console.log(`=== Fetching page ${pageCount} (trades before ${format(oldestTradeDate, 'yyyy-MM-dd')}) ===`);
-      
       // Subtract 1 day to avoid getting the same last transaction
       const nextEndDate = new Date(oldestTradeDate);
       nextEndDate.setDate(nextEndDate.getDate() - 1);
       
       // Check if we've gone past our start date filter
       if (startDate && nextEndDate < startDate) {
-        console.log('Reached start date limit, stopping pagination');
         break;
       }
       
@@ -250,32 +221,19 @@ export async function getSnapTradeTrades(
       await new Promise(resolve => setTimeout(resolve, 100));
     }
     
-    console.log(`=== Pagination complete: ${pageCount} pages, ${allTrades.length} total trades ===`);
+    console.log(`Fetched ${pageCount} pages, ${allTrades.length} total trades`);
 
     if (allTrades.length === 0) {
-      console.warn('=== No activities found after all attempts ===');
-      console.log('This could mean:');
-      console.log('1. No trading activity in the specified date range');
-      console.log('2. Account has no trade history');
-      console.log('3. API credentials may not have access to trade data');
-      console.log('4. SnapTrade API may be returning data in a different format');
-      
-      // Don't return an error if we simply have no trades - this is valid
+      console.warn('No trading activities found');
       return [];
     }
 
-    console.log('=== Final processing ===');
-    console.log(`Total trades collected: ${allTrades.length}`);
-
-    // Sort by trade date, most recent first, removing time component
+    // Sort by trade date, most recent first
     allTrades.sort((a, b) => {
       const aDate = format(new Date(a.trade_date || ''), 'yyyy-MM-dd');
       const bDate = format(new Date(b.trade_date || ''), 'yyyy-MM-dd');
       return new Date(bDate).getTime() - new Date(aDate).getTime();
     });
-
-    console.log('Returning trades:', allTrades.length > 0 ? 'SUCCESS' : 'EMPTY');
-    console.log('=== End getSnapTradeTrades ===');
 
     return allTrades;
   } catch (error) {
@@ -293,17 +251,8 @@ export async function getEnhancedTrades(
   endDate?: Date,
   accountId?: string
 ): Promise<EnhancedTrade[] | { error: string }> {
-  console.log('=== Starting getEnhancedTrades ===');
-  console.log('Enhanced trades input parameters:', {
-    snaptradeUserId,
-    userSecret: userSecret ? `${userSecret.substring(0, 8)}...` : 'undefined',
-    startDate: startDate?.toISOString(),
-    endDate: endDate?.toISOString(),
-    accountId
-  });
 
   try {
-    console.log('Calling getSnapTradeTrades...');
     const trades = await getSnapTradeTrades(
       snaptradeUserId,
       userSecret,
@@ -312,11 +261,6 @@ export async function getEnhancedTrades(
       accountId
     );
 
-    console.log('getSnapTradeTrades result:', { 
-      isError: 'error' in trades, 
-      tradeCount: Array.isArray(trades) ? trades.length : 0,
-      trades: Array.isArray(trades) ? trades : 'ERROR'
-    });
 
     if ('error' in trades) {
       console.error('Error from getSnapTradeTrades:', trades.error);
@@ -422,13 +366,7 @@ export async function getEnhancedTrades(
         // Match with open positions for P&L calculation
         const openForIdentifier = openPositions.get(identifier) || [];
         
-        console.log(`Processing ${trade.type} for ${identifier}:`, {
-          tradeId: trade.id,
-          symbol,
-          units: trade.units || trade.quantity,
-          price: trade.price,
-          openPositions: openForIdentifier.length
-        });
+        // Process trade for P&L matching
         
         if (['SELL', 'OPTIONEXPIRATION', 'OPTIONASSIGNMENT', 'OPTIONEXERCISE'].includes(trade.type)) {
           // For SELL trades (including option expiration), check if we have open positions to close
@@ -463,7 +401,6 @@ export async function getEnhancedTrades(
             }
 
             // Calculate realized P&L
-            console.log(`Calculating P&L for ${identifier}, closed ${closedPositions.length} positions`);
             let totalCostBasis = 0;
             let totalUnits = 0;
             let totalEntryFees = 0;
@@ -494,16 +431,7 @@ export async function getEnhancedTrades(
             
             const realizedPnL = grossPnL - totalEntryFees - (trade.fee || 0);
             
-            console.log(`P&L Results for ${identifier}:`, {
-              avgEntryPrice,
-              exitPrice: trade.price,
-              totalUnits,
-              multiplier,
-              grossPnL,
-              totalEntryFees,
-              exitFee: trade.fee,
-              realizedPnL
-            });
+            // P&L calculated
             
             baseTrade.position = 'close';
             baseTrade.entryPrice = avgEntryPrice;
@@ -549,12 +477,6 @@ export async function getEnhancedTrades(
           }
         } else if (trade.type === 'BUY') {
           // This is an opening trade
-          console.log(`Adding BUY position for ${identifier}:`, {
-            tradeId: trade.id,
-            units: trade.units || trade.quantity,
-            price: trade.price,
-            date: trade.trade_date
-          });
           
           if (!openPositions.has(identifier)) {
             openPositions.set(identifier, []);
@@ -663,7 +585,7 @@ export async function getTradeSummaryStats(
         startDate.setFullYear(startDate.getFullYear() - 1);
         break;
       case 'all':
-        startDate = new Date(2000, 0, 1); // Far enough back
+        startDate = undefined; // No start date for all-time stats
         break;
     }
 
@@ -671,7 +593,7 @@ export async function getTradeSummaryStats(
       snaptradeUserId,
       userSecret,
       startDate,
-      endDate
+      undefined // Don't limit end date for broader queries
     );
 
     if ('error' in allTrades) {
